@@ -1,0 +1,5 @@
+benchmark: lid_driven_cavity
+reference_data:
+  path: data/references/lid_driven_cavity_reference.csv
+note: "External reference loading is planned after the Kovasznay spine is validated."
+

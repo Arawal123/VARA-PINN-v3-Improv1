@@ -1,0 +1,5 @@
+benchmark: cylinder_wake
+reference_data:
+  path: data/references/cylinder_wake_reference.npy
+note: "External CFD/PIV reference loading is planned after Kovasznay and Taylor-Green."
+

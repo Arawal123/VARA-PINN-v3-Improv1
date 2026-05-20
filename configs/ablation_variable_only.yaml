@@ -1,0 +1,3 @@
+mode: variable_only_adaptive
+description: "Variable weighting without regional masks."
+

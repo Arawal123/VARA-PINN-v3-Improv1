@@ -1,0 +1,3 @@
+mode: global_adaptive_loss
+description: "Global variable-wise adaptive weights without region-local interventions."
+

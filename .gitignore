@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+
+# Keep generated experiment artifacts local unless intentionally archived.
+experiments/logs/*
+experiments/checkpoints/*
+experiments/metrics/*
+experiments/figures/*
+experiments/tables/*
+!experiments/logs/.gitkeep
+!experiments/checkpoints/.gitkeep
+!experiments/metrics/.gitkeep
+!experiments/figures/.gitkeep
+!experiments/tables/.gitkeep
+

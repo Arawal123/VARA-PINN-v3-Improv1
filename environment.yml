@@ -1,0 +1,14 @@
+name: vara-pinn
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pytorch
+  - numpy
+  - pandas
+  - matplotlib
+  - pyyaml
+  - tqdm
+  - pytest
+
