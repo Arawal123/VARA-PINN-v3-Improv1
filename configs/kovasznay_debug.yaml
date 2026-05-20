@@ -109,6 +109,8 @@ local_controller:
   max_actions_per_cycle: 6
   initial_strength: 1.0
   damping_factor: 0.5
+  tiny_j_tolerance: 0.002
+  strong_target_factor: 2.0
   local_velocity_weight_max: 2.0
   local_pressure_weight_max: 3.0
   local_omega_weight_max: 2.0

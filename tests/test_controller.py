@@ -28,9 +28,12 @@ def test_local_controller_state_rollback():
     actions = controller.propose([wr])
     controller.apply(actions)
     assert controller.state.local_weights
-    controller.rollback(snapshot, actions)
+    controller.rollback(snapshot)
+    controller.mark_rejected(actions[0], {"target_local_improvement": 0.0, "max_collateral_damage": 0.0})
     assert controller.state.local_weights == {}
-    assert controller.rejected_counts[("p_error_mean_centered", 1)] == 1
+    pair_state = controller.pair_state[("p_error_mean_centered", 1)]
+    assert pair_state.rejected_count == 1
+    assert pair_state.strength < controller.config.initial_strength
 
 
 def test_local_constrained_accept_reject_rule():
@@ -48,3 +51,13 @@ def test_local_constrained_accept_reject_rule():
     accepted, metrics = controller.evaluate_acceptance(actions, raw_before, raw_after, ["p_error_mean_centered"], before, after_bad, True)
     assert not accepted
     assert metrics["pressure_collateral_damage"] > 0.05
+
+
+def test_local_pair_strength_damps_after_rejection():
+    grid = PatchGrid(bounds=(0, 1, 0, 1), nx_patches=2, ny_patches=2)
+    wr = WeakRegion(2, "omega_error", 1.0, 1.0, grid.get_patch(2).bounds, "omega_dominant")
+    controller = LocalVARAController({"omega": 1.0}, LocalControllerConfig(initial_strength=1.0, damping_factor=0.5))
+    first = controller.propose([wr])[0]
+    controller.mark_rejected(first, {"target_local_improvement": 0.0, "max_collateral_damage": 0.0})
+    second = controller.propose([wr])[0]
+    assert second.strength < first.strength

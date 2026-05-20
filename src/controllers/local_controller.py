@@ -99,24 +99,34 @@ class LocalIntervention:
         return asdict(self)
 
 
+@dataclass
+class LocalPairState:
+    """Persistent controller memory for one variable-patch pair."""
+
+    strength: float
+    accepted_count: int = 0
+    rejected_count: int = 0
+    last_target_improvement: float = 0.0
+    last_collateral: float = 0.0
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class LocalVARAController:
     """Controller that only modifies variable-region local weights and priorities."""
 
     def __init__(self, initial_weights: dict[str, float], config: LocalControllerConfig) -> None:
         self.state = TrainingControlState(global_weights=dict(initial_weights))
         self.config = config
-        self.rejected_counts: dict[tuple[str, int], int] = {}
-        self.last_improvement: dict[tuple[str, int], float] = {}
+        self.pair_state: dict[tuple[str, int], LocalPairState] = {}
         self.history: list[dict[str, Any]] = []
 
     def snapshot(self) -> dict[str, Any]:
         return self.state.snapshot()
 
-    def rollback(self, snapshot: dict[str, Any], interventions: list[LocalIntervention]) -> None:
+    def rollback(self, snapshot: dict[str, Any]) -> None:
         self.state.restore(snapshot)
-        for intervention in interventions:
-            key = (intervention.variable, intervention.patch_id)
-            self.rejected_counts[key] = self.rejected_counts.get(key, 0) + 1
 
     def propose(self, weak_regions: list[object]) -> list[LocalIntervention]:
         interventions: list[LocalIntervention] = []
@@ -192,11 +202,28 @@ class LocalVARAController:
         return accepted, metrics
 
     def record_decision(self, interventions: list[LocalIntervention], decision: dict[str, Any]) -> None:
-        for intervention in interventions:
-            self.last_improvement[(intervention.variable, intervention.patch_id)] = float(
-                decision.get("target_local_improvement", 0.0)
-            )
         self.history.append(decision)
+
+    def mark_accepted(self, intervention: LocalIntervention, decision: dict[str, Any]) -> None:
+        """Update persistent pair memory after an accepted action."""
+        state = self._pair_state(intervention.variable, intervention.patch_id)
+        state.accepted_count += 1
+        state.last_target_improvement = float(decision.get("target_local_improvement", 0.0))
+        state.last_collateral = float(decision.get("max_collateral_damage", 0.0))
+        if state.last_target_improvement < self.config.min_improvement:
+            state.strength = max(1e-4, state.strength * self.config.damping_factor)
+
+    def mark_rejected(self, intervention: LocalIntervention, decision: dict[str, Any]) -> None:
+        """Update persistent pair memory after a rejected action."""
+        state = self._pair_state(intervention.variable, intervention.patch_id)
+        state.rejected_count += 1
+        state.last_target_improvement = float(decision.get("target_local_improvement", 0.0))
+        state.last_collateral = float(decision.get("max_collateral_damage", 0.0))
+        state.strength = max(1e-4, state.strength * self.config.damping_factor)
+
+    def pair_state_record(self) -> dict[str, Any]:
+        """Serialize persistent pair controller state for logs."""
+        return {f"{variable}|{patch_id}": state.to_record() for (variable, patch_id), state in self.pair_state.items()}
 
     def active_patches(self) -> set[int]:
         patches = set(int(pid) for pid in self.state.sampling_priorities)
@@ -211,13 +238,18 @@ class LocalVARAController:
         self.state.local_weights[variable][int(patch_id)] = min(old + float(amount), cap)
 
     def _strength(self, variable: str, patch_id: int, confidence: float) -> float:
-        key = (variable, patch_id)
-        strength = self.config.initial_strength * max(0.5, confidence)
-        if self.rejected_counts.get(key, 0) > 0:
-            strength *= self.config.damping_factor ** self.rejected_counts[key]
-        if self.last_improvement.get(key, self.config.min_improvement) < self.config.min_improvement:
+        state = self._pair_state(variable, patch_id)
+        strength = state.strength * max(0.5, confidence)
+        attempted = state.accepted_count + state.rejected_count
+        if attempted > 0 and state.last_target_improvement < self.config.min_improvement:
             strength *= self.config.damping_factor
         return max(1e-4, float(strength))
+
+    def _pair_state(self, variable: str, patch_id: int) -> LocalPairState:
+        key = (variable, int(patch_id))
+        if key not in self.pair_state:
+            self.pair_state[key] = LocalPairState(strength=float(self.config.initial_strength))
+        return self.pair_state[key]
 
     def _action_for_variable(self, variable: str) -> tuple[str, list[str]]:
         if "u_error" in variable:

@@ -23,10 +23,13 @@ from src.utils.logging import CSVLogger, JSONListLogger
 from src.visualization.controller_plots import (
     save_accept_reject_counts,
     save_active_intervention_map,
+    save_collateral_damage_timeline,
     save_local_weight_evolution,
     save_patch_grid_overlay,
     save_patch_scalar_heatmap,
     save_patch_score_map,
+    save_pressure_collateral_timeline,
+    save_targeted_patch_improvement,
 )
 
 
@@ -245,43 +248,102 @@ class VARATrainer(ExperimentTrainer):
             self._save_local_patch_figures(cycle, names, raw_before)
 
             interventions = self.local_controller.propose(weak_regions)
-            controller_snapshot = self.local_controller.snapshot()
-            model_snapshot = self._model_snapshot()
-            optimizer_snapshot = deepcopy(self.optimizer.state_dict())
-            old_local_weights = deepcopy(controller_snapshot["local_weights"])
-            old_sampling = deepcopy(controller_snapshot["sampling_priorities"])
-            self.local_controller.apply(interventions)
+            cycle_action_records: list[dict[str, Any]] = []
+            accepted_interventions: list[Any] = []
+            kept_metrics = metrics_before
 
             if constrained:
-                self.train_epochs(
-                    batch,
-                    self.local_controller.state,
-                    cycle=cycle,
-                    epochs_override=trial_epochs,
-                    log_prefix="local_trial",
-                )
-                _, norm_after, raw_after, _, _, _, _, coords_after = self._diagnose_local(update_ema=False, detect=False)
-                metrics_after = self._validation_metrics(coords_after)
-                accepted, decision_metrics = self.local_controller.evaluate_acceptance(
-                    interventions,
-                    raw_before,
-                    raw_after,
-                    names,
-                    metrics_before,
-                    metrics_after,
-                    constrained=True,
-                )
-                if not accepted:
-                    self._restore_model_snapshot(model_snapshot)
-                    self.optimizer.load_state_dict(optimizer_snapshot)
-                    self.local_controller.rollback(controller_snapshot, interventions)
-                    self.rejected_interventions += len(interventions)
-                    self.rollback_count += 1
-                    kept_metrics = metrics_before
-                else:
-                    self.accepted_interventions += len(interventions)
-                    kept_metrics = metrics_after
+                for candidate_id, intervention in enumerate(interventions):
+                    (
+                        _maps_candidate_before,
+                        _norm_candidate_before,
+                        raw_candidate_before,
+                        _names_candidate_before,
+                        _weak_candidate_before,
+                        _x_candidate_before,
+                        _y_candidate_before,
+                        coords_candidate_before,
+                    ) = self._diagnose_local(update_ema=False, detect=False)
+                    metrics_candidate_before = self._validation_metrics(coords_candidate_before)
+                    controller_snapshot = self.local_controller.snapshot()
+                    model_snapshot = self._model_snapshot()
+                    optimizer_snapshot = deepcopy(self.optimizer.state_dict())
+                    old_local_weights = deepcopy(controller_snapshot["local_weights"])
+                    old_sampling = deepcopy(controller_snapshot["sampling_priorities"])
+                    strength_before = self._pair_strength(intervention.variable, intervention.patch_id)
+
+                    self.local_controller.apply([intervention])
+                    self.train_epochs(
+                        batch,
+                        self.local_controller.state,
+                        cycle=cycle,
+                        epochs_override=trial_epochs,
+                        log_prefix=f"local_trial_{candidate_id}",
+                    )
+                    _, _, raw_candidate_after, _, _, _, _, coords_candidate_after = self._diagnose_local(
+                        update_ema=False,
+                        detect=False,
+                    )
+                    metrics_candidate_after = self._validation_metrics(coords_candidate_after)
+                    accepted, decision_metrics = self.local_controller.evaluate_acceptance(
+                        [intervention],
+                        raw_candidate_before,
+                        raw_candidate_after,
+                        names,
+                        metrics_candidate_before,
+                        metrics_candidate_after,
+                        constrained=True,
+                    )
+                    rejection_reason = self._local_rejection_reason(accepted, decision_metrics)
+
+                    if accepted:
+                        self.local_controller.mark_accepted(intervention, decision_metrics)
+                        self.accepted_interventions += 1
+                        kept_metrics = metrics_candidate_after
+                        accepted_interventions.append(intervention)
+                    else:
+                        self._restore_model_snapshot(model_snapshot)
+                        self.optimizer.load_state_dict(optimizer_snapshot)
+                        self.local_controller.rollback(controller_snapshot)
+                        self.local_controller.mark_rejected(intervention, decision_metrics)
+                        self.rejected_interventions += 1
+                        self.rollback_count += 1
+                        kept_metrics = metrics_candidate_before
+
+                    strength_after = self._pair_strength(intervention.variable, intervention.patch_id)
+                    decision = self._build_local_decision(
+                        cycle=cycle,
+                        constrained=constrained,
+                        accepted=accepted,
+                        interventions=[intervention],
+                        old_local_weights=old_local_weights,
+                        old_sampling=old_sampling,
+                        metrics_before=metrics_candidate_before,
+                        metrics_after=metrics_candidate_after,
+                        raw_before=raw_candidate_before,
+                        raw_after=raw_candidate_after,
+                        diagnostic_names=names,
+                        decision_metrics=decision_metrics,
+                        candidate_id=candidate_id,
+                        rejection_reason=rejection_reason,
+                        strength_before=strength_before,
+                        strength_after=strength_after,
+                    )
+                    self.local_controller.record_decision([intervention], decision)
+                    self.local_decisions.append(decision)
+                    action_record = intervention.to_record()
+                    action_record["candidate_id"] = candidate_id
+                    action_record["accepted"] = bool(accepted)
+                    cycle_action_records.append(action_record)
+                    self.local_action_logger.log(
+                        {"cycle": cycle, "mode": self.mode, "candidate_id": candidate_id, "actions": [action_record], "decision": decision}
+                    )
+                    self.local_decision_logger.log(self._flat_local_decision(decision))
             else:
+                controller_snapshot = self.local_controller.snapshot()
+                old_local_weights = deepcopy(controller_snapshot["local_weights"])
+                old_sampling = deepcopy(controller_snapshot["sampling_priorities"])
+                self.local_controller.apply(interventions)
                 raw_after = raw_before
                 metrics_after = metrics_before
                 accepted = True
@@ -296,40 +358,50 @@ class VARATrainer(ExperimentTrainer):
                     constrained=False,
                 )[1]
                 self.accepted_interventions += len(interventions)
+                accepted_interventions = list(interventions)
+                action_records = [intervention.to_record() for intervention in interventions]
+                cycle_action_records.extend(action_records)
+                decision = self._build_local_decision(
+                    cycle=cycle,
+                    constrained=constrained,
+                    accepted=accepted,
+                    interventions=interventions,
+                    old_local_weights=old_local_weights,
+                    old_sampling=old_sampling,
+                    metrics_before=metrics_before,
+                    metrics_after=metrics_after,
+                    raw_before=raw_before,
+                    raw_after=raw_after,
+                    diagnostic_names=names,
+                    decision_metrics=decision_metrics,
+                )
+                self.local_controller.record_decision(interventions, decision)
+                self.local_decisions.append(decision)
+                self.local_action_logger.log({"cycle": cycle, "mode": self.mode, "actions": action_records, "decision": decision})
+                self.local_decision_logger.log(self._flat_local_decision(decision))
 
-            action_records = [intervention.to_record() for intervention in interventions]
-            decision = self._build_local_decision(
-                cycle=cycle,
-                constrained=constrained,
-                accepted=accepted,
-                interventions=interventions,
-                old_local_weights=old_local_weights,
-                old_sampling=old_sampling,
-                metrics_before=metrics_before,
-                metrics_after=metrics_after,
-                raw_before=raw_before,
-                raw_after=raw_after,
-                diagnostic_names=names,
-                decision_metrics=decision_metrics,
-            )
-            self.local_controller.record_decision(interventions, decision)
-            self.local_decisions.append(decision)
-            self.local_action_logger.log({"cycle": cycle, "mode": self.mode, "actions": action_records, "decision": decision})
-            self.local_decision_logger.log(self._flat_local_decision(decision))
             self._log_local_weights(cycle)
-            save_active_intervention_map(action_records, self.patch_grid, self.local_figure_dir / f"local_action_map_cycle_{cycle:03d}.png", f"Local actions cycle {cycle}")
+            save_active_intervention_map(
+                cycle_action_records,
+                self.patch_grid,
+                self.local_figure_dir / f"local_action_map_cycle_{cycle:03d}.png",
+                f"Local actions cycle {cycle}",
+            )
 
             self.metrics_logger.log({"cycle": cycle, "phase": "local_after", **kept_metrics, "J_score": self.local_controller.objective(kept_metrics)})
             self.maybe_checkpoint(cycle, kept_metrics)
             batch = self._resample_local_batch(
                 maps_before,
                 coords,
-                weak_regions if accepted else [],
-                adaptive=bool(interventions) and accepted,
+                accepted_interventions,
+                adaptive=bool(accepted_interventions),
             )
 
         save_local_weight_evolution(self.local_weight_records, self.local_figure_dir / "local_weight_evolution.png")
         save_accept_reject_counts(self.local_decisions, self.local_figure_dir / "accepted_vs_rejected.png")
+        save_targeted_patch_improvement(self.local_decisions, self.local_figure_dir / "targeted_patch_improvement.png")
+        save_collateral_damage_timeline(self.local_decisions, self.local_figure_dir / "collateral_damage_timeline.png")
+        save_pressure_collateral_timeline(self.local_decisions, self.local_figure_dir / "pressure_collateral_timeline.png")
         metrics = self.evaluate_and_save_final()
         metrics["J_score"] = self.local_controller.objective(metrics)
         metrics["accepted_interventions"] = self.accepted_interventions
@@ -409,15 +481,24 @@ class VARATrainer(ExperimentTrainer):
         raw_after: np.ndarray,
         diagnostic_names: list[str],
         decision_metrics: dict[str, Any],
+        candidate_id: int | None = None,
+        rejection_reason: str = "",
+        strength_before: float | None = None,
+        strength_after: float | None = None,
     ) -> dict[str, Any]:
         target_before, target_after = self._target_patch_scores(interventions, raw_before, raw_after, diagnostic_names)
+        first = interventions[0] if interventions else None
         return {
             "cycle": cycle,
             "mode": self.mode,
+            "candidate_id": candidate_id,
             "constrained": constrained,
             "accepted": bool(accepted),
             "rejected": bool(not accepted),
             "rollback_triggered": bool(constrained and not accepted),
+            "rejection_reason": rejection_reason,
+            "variable": first.variable if first is not None else "",
+            "patch_id": first.patch_id if first is not None else None,
             "selected_pairs": [intervention.to_record() for intervention in interventions],
             "targeted_variables": [intervention.variable for intervention in interventions],
             "targeted_patches": [intervention.patch_id for intervention in interventions],
@@ -428,6 +509,8 @@ class VARATrainer(ExperimentTrainer):
             "sampling_after": deepcopy(self.local_controller.state.sampling_priorities),
             "action_type": ",".join(intervention.action for intervention in interventions),
             "intervention_strength": max([intervention.strength for intervention in interventions], default=0.0),
+            "strength_before": strength_before,
+            "strength_after": strength_after,
             "target_local_error_before": target_before,
             "target_local_error_after": target_after,
             "u_rel_l2_before": metrics_before.get("u_rel_l2"),
@@ -467,16 +550,23 @@ class VARATrainer(ExperimentTrainer):
         return {
             "cycle": decision["cycle"],
             "mode": decision["mode"],
+            "candidate_id": decision.get("candidate_id"),
+            "variable": decision.get("variable"),
+            "patch_id": decision.get("patch_id"),
             "accepted": decision["accepted"],
             "rejected": decision["rejected"],
             "rollback_triggered": decision["rollback_triggered"],
+            "rejection_reason": decision.get("rejection_reason", ""),
             "targeted_variables": ",".join(decision["targeted_variables"]),
             "targeted_patches": ",".join(str(pid) for pid in decision["targeted_patches"]),
             "active_patches": ",".join(str(pid) for pid in decision["active_patches"]),
             "action_type": decision["action_type"],
             "intervention_strength": decision["intervention_strength"],
+            "strength_before": decision.get("strength_before"),
+            "strength_after": decision.get("strength_after"),
             "target_local_error_before": decision["target_local_error_before"],
             "target_local_error_after": decision["target_local_error_after"],
+            "target_local_improvement": decision.get("target_local_improvement"),
             "u_rel_l2_before": decision["u_rel_l2_before"],
             "u_rel_l2_after": decision["u_rel_l2_after"],
             "v_rel_l2_before": decision["v_rel_l2_before"],
@@ -499,6 +589,7 @@ class VARATrainer(ExperimentTrainer):
             "mode": self.mode,
             "local_weights": deepcopy(self.local_controller.state.local_weights),
             "sampling_priorities": deepcopy(self.local_controller.state.sampling_priorities),
+            "pair_state": self.local_controller.pair_state_record(),
         }
         self.local_weight_records.append(record)
         self.local_weights_logger.log(record)
@@ -556,6 +647,33 @@ class VARATrainer(ExperimentTrainer):
         if not counts:
             return None
         return max(counts, key=counts.get)
+
+    def _pair_strength(self, variable: str, patch_id: int) -> float:
+        key = (variable, int(patch_id))
+        state = self.local_controller.pair_state.get(key)
+        return float(state.strength) if state is not None else float(self.local_controller.config.initial_strength)
+
+    def _local_rejection_reason(self, accepted: bool, decision_metrics: dict[str, Any]) -> str:
+        if accepted:
+            return ""
+        reasons = []
+        cfg = self.local_controller.config
+        target = float(decision_metrics.get("target_local_improvement", 0.0))
+        j_before = float(decision_metrics.get("J_before", 0.0))
+        j_after = float(decision_metrics.get("J_after", 0.0))
+        max_collateral = float(decision_metrics.get("max_collateral_damage", 0.0))
+        pressure_collateral = float(decision_metrics.get("pressure_collateral_damage", 0.0))
+        strong_target = target >= cfg.min_improvement * cfg.strong_target_factor
+        tiny_j_ok = j_after <= j_before * (1.0 + cfg.tiny_j_tolerance) and strong_target
+        if target < cfg.min_improvement:
+            reasons.append("target_improvement_below_min")
+        if not (j_after <= j_before or tiny_j_ok):
+            reasons.append("objective_not_improved")
+        if max_collateral > cfg.collateral_tolerance:
+            reasons.append("collateral_too_high")
+        if pressure_collateral > cfg.pressure_collateral_tolerance:
+            reasons.append("pressure_collateral_too_high")
+        return ",".join(reasons) if reasons else "constraint_failed"
 
     def _j_score(self, metrics: dict[str, float]) -> float:
         if hasattr(self.controller.policy, "score_metrics"):

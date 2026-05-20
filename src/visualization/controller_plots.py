@@ -144,6 +144,71 @@ def save_accept_reject_counts(decisions: list[dict], path: str | Path) -> None:
     plt.close(fig)
 
 
+def save_targeted_patch_improvement(decisions: list[dict], path: str | Path) -> None:
+    """Plot targeted local improvement for every candidate action."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    values = [float(row.get("target_local_improvement", 0.0)) for row in decisions]
+    colors = ["#26734d" if row.get("accepted") else "#b43c3c" for row in decisions]
+    fig, ax = plt.subplots(figsize=(8, 3.8), constrained_layout=True)
+    if values:
+        ax.bar(np.arange(len(values)), values, color=colors)
+        ax.axhline(0.0, color="black", lw=0.8)
+    ax.set_xlabel("candidate intervention")
+    ax.set_ylabel("targeted local improvement")
+    ax.set_title("Per-action targeted patch improvement")
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def save_collateral_damage_timeline(decisions: list[dict], path: str | Path) -> None:
+    """Plot max non-target collateral damage over candidate actions."""
+    _save_metric_timeline(
+        decisions,
+        path,
+        metric="max_collateral_damage",
+        ylabel="max collateral damage",
+        title="Collateral damage timeline",
+        color="#8a4fbf",
+    )
+
+
+def save_pressure_collateral_timeline(decisions: list[dict], path: str | Path) -> None:
+    """Plot pressure-specific collateral damage over candidate actions."""
+    _save_metric_timeline(
+        decisions,
+        path,
+        metric="pressure_collateral_damage",
+        ylabel="pressure collateral damage",
+        title="Pressure collateral timeline",
+        color="#c15b30",
+    )
+
+
+def _save_metric_timeline(
+    decisions: list[dict],
+    path: str | Path,
+    metric: str,
+    ylabel: str,
+    title: str,
+    color: str,
+) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    values = [float(row.get(metric, 0.0)) for row in decisions]
+    fig, ax = plt.subplots(figsize=(8, 3.8), constrained_layout=True)
+    if values:
+        ax.plot(np.arange(len(values)), values, marker="o", color=color)
+        for idx, row in enumerate(decisions):
+            if row.get("rejected"):
+                ax.scatter([idx], [values[idx]], color="#b43c3c", s=32, zorder=3)
+    ax.set_xlabel("candidate intervention")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
 def _short_label(variable: str) -> str:
     if "p_error" in variable or "pressure" in variable:
         return "p"
