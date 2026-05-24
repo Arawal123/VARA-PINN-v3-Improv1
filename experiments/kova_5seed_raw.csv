@@ -1,0 +1,11 @@
+run,mode,seed,u_rel_l2,v_rel_l2,p_rel_l2_centered,omega_rel_l2,pde_residual_mean,accepted_interventions,rejected_interventions,rollback_count,J_score
+kovasznay_vanilla_pinn_seed0_20260520-233047,vanilla_pinn,0,0.013990644524527153,,0.034570362149062325,0.024876139247782328,,,,,
+kovasznay_local_constrained_vara_seed0_20260520-235557,local_constrained_vara,0,0.008529262750784292,,0.02529165750625851,0.013570456798225826,,26,10,10,0.16083626951319938
+kovasznay_vanilla_pinn_seed1_20260521-004831,vanilla_pinn,1,0.010892,0.113525,0.027399,0.017638,0.060938,,,,0.198388
+kovasznay_local_constrained_vara_seed1_20260521-005612,local_constrained_vara,1,0.008728,0.061914,0.017464,0.012754,0.043901,23,13,13,0.120567
+kovasznay_vanilla_pinn_seed2_20260521-010909,vanilla_pinn,2,0.012591,0.110317,0.024752,0.017447,0.05862,,,,0.192138
+kovasznay_local_constrained_vara_seed2_20260521-011640,local_constrained_vara,2,0.008828,0.067522,0.01215,0.012779,0.043011,21,15,15,0.118107
+kovasznay_vanilla_pinn_seed3_20260521-211314,vanilla_pinn,3,0.009799,0.118506,0.029927,0.022506,0.066455,,,,0.212316
+kovasznay_local_constrained_vara_seed3_20260521-212044,local_constrained_vara,3,0.006396,0.056208,0.017696,0.012718,0.037799,29,7,7,0.111316
+kovasznay_vanilla_pinn_seed4_20260521-213335,vanilla_pinn,4,0.011531,0.108632,0.029336,0.018614,0.063371,,,,0.198624
+kovasznay_local_constrained_vara_seed4_20260521-214103,local_constrained_vara,4,0.005809,0.05792,0.018883,0.011469,0.040958,25,11,11,0.11376
