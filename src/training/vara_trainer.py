@@ -678,12 +678,16 @@ class VARATrainer(ExperimentTrainer):
     def _j_score(self, metrics: dict[str, float]) -> float:
         if hasattr(self.controller.policy, "score_metrics"):
             return float(self.controller.policy.score_metrics(metrics))
+        def metric(name: str) -> float:
+            value = float(metrics.get(name, 0.0))
+            return value if np.isfinite(value) else 0.0
+
         return float(
-            metrics.get("u_rel_l2", 0.0)
-            + metrics.get("v_rel_l2", 0.0)
-            + 1.5 * metrics.get("p_rel_l2_centered", 0.0)
-            + metrics.get("omega_rel_l2", 0.0)
-            + 0.25 * metrics.get("pde_residual_mean", 0.0)
+            metric("u_rel_l2")
+            + metric("v_rel_l2")
+            + 1.5 * metric("p_rel_l2_centered")
+            + metric("omega_rel_l2")
+            + 0.25 * metric("pde_residual_mean")
         )
 
     def _model_snapshot(self) -> dict[str, torch.Tensor]:

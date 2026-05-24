@@ -164,12 +164,16 @@ class LocalVARAController:
 
     def objective(self, metrics: dict[str, float]) -> float:
         weights = self.config.objective_weights or {}
+        def metric(name: str) -> float:
+            value = float(metrics.get(name, 0.0))
+            return value if np.isfinite(value) else 0.0
+
         return float(
-            float(weights.get("u", 1.0)) * float(metrics.get("u_rel_l2", 0.0))
-            + float(weights.get("v", 1.0)) * float(metrics.get("v_rel_l2", 0.0))
-            + float(weights.get("p", 1.5)) * float(metrics.get("p_rel_l2_centered", 0.0))
-            + float(weights.get("omega", 1.0)) * float(metrics.get("omega_rel_l2", 0.0))
-            + float(weights.get("residual", 0.25)) * float(metrics.get("pde_residual_mean", 0.0))
+            float(weights.get("u", 1.0)) * metric("u_rel_l2")
+            + float(weights.get("v", 1.0)) * metric("v_rel_l2")
+            + float(weights.get("p", 1.5)) * metric("p_rel_l2_centered")
+            + float(weights.get("omega", 1.0)) * metric("omega_rel_l2")
+            + float(weights.get("residual", 0.25)) * metric("pde_residual_mean")
         )
 
     def evaluate_acceptance(

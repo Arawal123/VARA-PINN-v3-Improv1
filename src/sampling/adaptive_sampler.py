@@ -43,6 +43,8 @@ class MixedAdaptiveSampler:
         weak_regions: list[object] | None = None,
         sampling_priorities: dict[int, float] | None = None,
     ) -> torch.Tensor:
+        if n <= 0:
+            return torch.zeros((0, 2), dtype=torch.float32, device=self.device)
         counts = self._counts(n)
         pieces: list[np.ndarray] = [self.uniform.sample_numpy(counts.get("uniform", 0))]
 
@@ -85,4 +87,3 @@ class MixedAdaptiveSampler:
         for i in range(missing):
             raw[keys[i % len(keys)]] += 1
         return raw
-

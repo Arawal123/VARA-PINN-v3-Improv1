@@ -20,6 +20,12 @@ from src.losses.vorticity_losses import vorticity_transport_residual
 from src.models import build_mlp_from_config
 from src.physics.kovasznay import KovasznayFlow
 from src.physics.pressure_poisson import pressure_poisson_residual
+from src.physics.rectangular_benchmarks import (
+    BoundaryStressBoxFlow,
+    DoubleVortexBoxFlow,
+    LidDrivenCavityQualitative,
+    PoiseuilleChannelFlow,
+)
 from src.sampling import BoundarySampler, MixedAdaptiveSampler, UniformSampler
 from src.training.checkpointing import save_checkpoint
 from src.utils.config import save_config
@@ -92,6 +98,7 @@ class ExperimentTrainer:
         self.score_logger = JSONListLogger(self.run_dir / "patch_scores.json")
         self.accept_logger = JSONListLogger(self.run_dir / "acceptance_log.json")
         self.action_records: list[dict[str, Any]] = []
+        self.last_losses: dict[str, float] = {}
 
         self.uniform_sampler = UniformSampler(self.benchmark.bounds, self.device, self.seed)
         self.boundary_sampler = BoundarySampler(self.benchmark.bounds, self.device, self.seed + 1)
@@ -106,16 +113,28 @@ class ExperimentTrainer:
 
     def _build_benchmark(self, config: dict[str, Any]) -> Any:
         name = config.get("benchmark", "kovasznay").lower()
-        if name != "kovasznay":
-            raise NotImplementedError(f"The first working target is Kovasznay; got {name}.")
         cfg = config.get("benchmark_params", {})
-        return KovasznayFlow(
-            reynolds=float(cfg.get("reynolds", 40.0)),
-            x_min=float(cfg.get("x_min", -0.5)),
-            x_max=float(cfg.get("x_max", 1.0)),
-            y_min=float(cfg.get("y_min", -0.5)),
-            y_max=float(cfg.get("y_max", 1.5)),
-        )
+        common = {
+            "reynolds": float(cfg.get("reynolds", 40.0)),
+            "x_min": float(cfg.get("x_min", -0.5 if name == "kovasznay" else 0.0)),
+            "x_max": float(cfg.get("x_max", 1.0)),
+            "y_min": float(cfg.get("y_min", -0.5 if name == "kovasznay" else 0.0)),
+            "y_max": float(cfg.get("y_max", 1.5 if name == "kovasznay" else 1.0)),
+        }
+        if name == "kovasznay":
+            return KovasznayFlow(**common)
+        rectangular = {**common, "amplitude": float(cfg.get("amplitude", 1.0))}
+        if name in {"channel_inflow_outflow", "channel", "poiseuille"}:
+            return PoiseuilleChannelFlow(**rectangular)
+        if name in {"double_vortex_box", "double_vortex", "recirculating_vortex"}:
+            return DoubleVortexBoxFlow(**rectangular)
+        if name in {"boundary_condition_stress_test", "bc_stress"}:
+            return BoundaryStressBoxFlow(**rectangular)
+        if name in {"lid_driven_cavity", "cavity"}:
+            return LidDrivenCavityQualitative(**rectangular, lid_velocity=float(cfg.get("lid_velocity", 1.0)))
+        if name in {"rectangular_aspect_ratio", "rectangular_aspect_ratio_sweep"}:
+            return PoiseuilleChannelFlow(**rectangular)
+        raise NotImplementedError(f"Unknown benchmark: {name}.")
 
     def initial_batch(self) -> dict[str, Any]:
         train_cfg = self.config.get("training", {})
@@ -199,6 +218,7 @@ class ExperimentTrainer:
             last_losses.update(local_logs)
             last_losses["total"] = float(total.detach().cpu())
             last_losses["grad_norm"] = grad_norm
+            self.last_losses = dict(last_losses)
             if local_epoch % log_every == 0 or local_epoch == epochs - 1:
                 self.loss_logger.log({"cycle": cycle, "phase": log_prefix or "main", "epoch": self.global_step, **last_losses})
             self.global_step += 1
@@ -245,6 +265,10 @@ class ExperimentTrainer:
     def evaluate_and_save_final(self) -> dict[str, float]:
         X, Y, coords = self.test_grid()
         metrics = evaluate_on_grid(self.model, self.benchmark, coords, self.device, self.steady)
+        metrics["final_total_loss"] = float(self.last_losses.get("total", float("nan")))
+        metrics["reference_kind"] = getattr(self.benchmark, "reference_kind", "analytical")
+        metrics["has_reference"] = bool(getattr(self.benchmark, "has_reference", True))
+        metrics["collapsed"] = self._collapsed(metrics)
         self.metrics_logger.log({"cycle": "final_test", **metrics})
         save_json(metrics, self.run_dir / "summary.json")
         pd.DataFrame([metrics]).to_csv(self.table_dir / "summary.csv", index=False)
@@ -264,7 +288,8 @@ class ExperimentTrainer:
 
     def save_plots(self, X: np.ndarray, Y: np.ndarray, coords: np.ndarray) -> None:
         builder = DiagnosticMapBuilder(self.model, self.benchmark, self.device, self.steady)
-        maps = builder.build(coords, mode="full_reference")
+        diag_mode = "full_reference" if getattr(self.benchmark, "has_reference", True) else "residual_only"
+        maps = builder.build(coords, mode=diag_mode)
         shape = X.shape
         save_field_panel(
             X,
@@ -277,17 +302,18 @@ class ExperimentTrainer:
             },
             self.figure_dir / "predicted_fields.png",
         )
-        save_field_panel(
-            X,
-            Y,
-            {
-                "u ref": maps["u_ref"].reshape(shape),
-                "v ref": maps["v_ref"].reshape(shape),
-                "p ref centered": maps["p_ref"].reshape(shape),
-                "omega ref": maps["omega_ref"].reshape(shape),
-            },
-            self.figure_dir / "reference_fields.png",
-        )
+        if getattr(self.benchmark, "has_reference", True):
+            save_field_panel(
+                X,
+                Y,
+                {
+                    "u ref": maps["u_ref"].reshape(shape),
+                    "v ref": maps["v_ref"].reshape(shape),
+                    "p ref centered": maps["p_ref"].reshape(shape),
+                    "omega ref": maps["omega_ref"].reshape(shape),
+                },
+                self.figure_dir / "reference_fields.png",
+            )
         for name in ["u_error", "v_error", "p_error_mean_centered", "omega_error", "pde_residual"]:
             save_heatmap(maps[name].reshape(shape), X, Y, self.figure_dir / f"{name}.png", name)
         save_streamlines(
@@ -309,3 +335,25 @@ class ExperimentTrainer:
         if score < self.best_score:
             self.best_score = score
             save_checkpoint(self.checkpoint_dir / "best.pt", self.model, self.optimizer, self.config, metrics, self.global_step, cycle)
+
+    def _collapsed(self, metrics: dict[str, Any]) -> bool:
+        thresholds = self.config.get("collapse_thresholds", {})
+        for name in ["u_rel_l2", "v_rel_l2", "p_rel_l2_centered", "omega_rel_l2", "pde_residual_mean"]:
+            value = metrics.get(name)
+            if value is None:
+                continue
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(numeric) and name.endswith("_rel_l2"):
+                continue
+            if not math.isfinite(numeric):
+                return True
+            default = 0.5 if name.endswith("_rel_l2") or name == "p_rel_l2_centered" else 5.0
+            if numeric > float(thresholds.get(name, default)):
+                return True
+        bc = metrics.get("boundary_condition_error")
+        if bc is not None and math.isfinite(float(bc)) and float(bc) > float(thresholds.get("boundary_condition_error", 1.0)):
+            return True
+        return False

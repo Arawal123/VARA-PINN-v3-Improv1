@@ -65,7 +65,8 @@ class DiagnosticMapBuilder:
             vt = vorticity_transport_residual(self.model, coords, nu=self.benchmark.nu, steady=False)
             maps["vorticity_transport_residual"] = np.abs(vt.detach().cpu().numpy())
 
-        if mode in {"full_reference", "sparse_data"}:
+        has_reference = bool(getattr(self.benchmark, "has_reference", True))
+        if mode in {"full_reference", "sparse_data"} and has_reference:
             ref = self.benchmark.exact_np(coords_np)
             p_ref_c = center_pressure(ref["p"])
             p_pred_c = center_pressure(p_pred)
@@ -121,4 +122,3 @@ class DiagnosticMapBuilder:
             viol = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
         out[boundary_mask] = viol.cpu().numpy()
         return out
-

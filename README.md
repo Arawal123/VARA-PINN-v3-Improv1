@@ -35,6 +35,36 @@ python scripts/run_multiseed.py --config configs/kovasznay.yaml --modes vanilla_
 
 Implemented modes share the same trainer surface. The first release prioritizes the Kovasznay full VARA path; the remaining modes are present as reproducible run modes and should be hardened with matched-compute studies before claims.
 
+## Professor Benchmark Suite
+
+The lightweight benchmark suite extends the same trainer surface beyond Kovasznay for fast professor-facing checks. Kovasznay remains the trusted analytical benchmark. Channel and double-vortex cases use analytical/manufactured references. Lid-driven cavity is marked residual-only unless external CFD reference data is added; it reports boundary and residual metrics rather than fake interior relative errors.
+
+Smoke-test examples:
+
+```bash
+python scripts/run_channel_inflow_outflow.py --method both --quick --seeds 0
+python scripts/run_lid_driven_cavity.py --method both --quick --seeds 0
+python scripts/run_double_vortex_box.py --method both --quick --seeds 0
+python scripts/run_boundary_condition_stress_test.py --method both --quick --seeds 0
+python scripts/run_rectangular_aspect_ratio_sweep.py --method both --quick --seeds 0 --aspect_ratios 1.0 2.0
+```
+
+Full-style multi-seed examples:
+
+```bash
+python scripts/run_channel_inflow_outflow.py --method both --seeds 0 1 2
+python scripts/run_lid_driven_cavity.py --method both --seeds 0 1 2
+python scripts/run_all_benchmarks.py --method both --quick --seeds 0
+```
+
+Aggregate professor-readable tables and plots:
+
+```bash
+python scripts/aggregate_benchmark_results.py --results_dir experiments/logs --output_dir experiments/benchmark_summary
+```
+
+Aggregation writes `combined_results.csv`, `final_summary_table.csv`, `collapse_rate_table.csv`, `seedwise_comparison_table.csv`, `methodwise_mean_std_table.csv`, and comparison plots under `experiments/benchmark_summary/figures/`.
+
 ## Outputs
 
 Each run writes:
@@ -84,4 +114,3 @@ Kovasznay is the first complete benchmark. Taylor-Green has an analytical refere
   note = {Preprint in preparation}
 }
 ```
-

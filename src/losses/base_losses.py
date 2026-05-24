@@ -41,7 +41,7 @@ def compute_pointwise_losses(
     bc_ref = benchmark.exact_torch(xy_bc)
     pointwise["bc"] = (bc_pred[:, 0:1] - bc_ref["u"]).pow(2) + (bc_pred[:, 1:2] - bc_ref["v"]).pow(2)
 
-    if xy_data is not None and targets is not None:
+    if xy_data is not None and targets is not None and xy_data.shape[0] > 0 and getattr(benchmark, "has_reference", True):
         data_pred = model(xy_data)
         omega_pred = navier_stokes_residuals(model, xy_data, nu=benchmark.nu, steady=steady)["omega"]
         p_pred_c = center_pressure(data_pred[:, 2:3])
@@ -68,4 +68,3 @@ def weighted_sum(losses: dict[str, torch.Tensor], weights: dict[str, float]) -> 
     for name, loss in losses.items():
         total = total + float(weights.get(name, 0.0)) * loss
     return total
-
