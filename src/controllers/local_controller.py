@@ -180,6 +180,8 @@ class LocalVARAController:
             + float(weights.get("momentum", 0.0)) * self._metric(metrics, "momentum_residual_mean")
             + float(weights.get("boundary", 0.0)) * self._metric(metrics, "boundary_condition_error")
             + float(weights.get("unweighted_validation", 0.0)) * self._metric(metrics, "unweighted_validation_loss")
+            + float(weights.get("profile", 0.0)) * self._metric(metrics, "centerline_profile_score")
+            + float(weights.get("cavity", 0.0)) * self._metric(metrics, "cavity_benchmark_score")
         )
 
     def evaluate_acceptance(

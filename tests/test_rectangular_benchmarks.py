@@ -25,6 +25,7 @@ def test_lid_cavity_boundary_reference_only():
     xy = torch.tensor([[0.5, 1.0], [0.5, 0.0]], dtype=torch.float32)
     ref = bench.exact_torch(xy)
     assert not bench.has_reference
+    assert not bench.has_profile_reference
     assert torch.isclose(ref["u"][0, 0], torch.tensor(1.0))
     assert torch.isclose(ref["u"][1, 0], torch.tensor(0.0))
 

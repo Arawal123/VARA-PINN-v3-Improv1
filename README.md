@@ -37,13 +37,13 @@ Implemented modes share the same trainer surface. The first release prioritizes 
 
 ## Professor Benchmark Suite
 
-The lightweight benchmark suite extends the same trainer surface beyond Kovasznay for fast professor-facing checks. Kovasznay remains the trusted analytical benchmark. Channel and double-vortex cases use analytical/manufactured references. Lid-driven cavity is marked residual-only unless external CFD reference data is added; it reports boundary and residual metrics rather than fake interior relative errors.
+The lightweight benchmark suite extends the same trainer surface beyond Kovasznay for fast professor-facing checks. Kovasznay remains the trusted analytical benchmark. Channel and double-vortex cases use analytical/manufactured references. Lid-driven cavity supports Ghia et al. 1982 centerline reference profiles and optional external CFD/DNS references; full-field cavity L2 metrics are only reported when a full-field reference is supplied.
 
 Smoke-test examples:
 
 ```bash
 python scripts/run_channel_inflow_outflow.py --method both --quick --seeds 0
-python scripts/run_lid_driven_cavity.py --method both --quick --seeds 0
+python scripts/run_lid_driven_cavity.py --method both --quick --seeds 0 --reynolds 100 --reference ghia
 python scripts/run_double_vortex_box.py --method both --quick --seeds 0
 python scripts/run_boundary_condition_stress_test.py --method both --quick --seeds 0
 python scripts/run_rectangular_aspect_ratio_sweep.py --method both --quick --seeds 0 --aspect_ratios 1.0 2.0
@@ -53,7 +53,7 @@ Full-style multi-seed examples:
 
 ```bash
 python scripts/run_channel_inflow_outflow.py --method both --seeds 0 1 2
-python scripts/run_lid_driven_cavity.py --method both --seeds 0 1 2
+python scripts/run_lid_driven_cavity.py --method both --seeds 0 1 2 --reynolds 100 --reference ghia
 python scripts/run_all_benchmarks.py --method both --quick --seeds 0
 ```
 
@@ -63,7 +63,15 @@ Aggregate professor-readable tables and plots:
 python scripts/aggregate_benchmark_results.py --results_dir experiments/logs --output_dir experiments/benchmark_summary
 ```
 
-Aggregation writes `combined_results.csv`, `final_summary_table.csv`, `collapse_rate_table.csv`, `seedwise_comparison_table.csv`, `methodwise_mean_std_table.csv`, and comparison plots under `experiments/benchmark_summary/figures/`. Runs launched with `--quick` are tagged as `run_type=smoke`; they are useful for checking plumbing, but collapse rates are not evaluated for smoke runs. Benchmark summaries include unweighted validation/data/PDE/BC losses so adaptive loss weights do not hide collateral damage.
+Aggregation writes `combined_results.csv`, `final_summary_table.csv`, `collapse_rate_table.csv`, `seedwise_comparison_table.csv`, `methodwise_mean_std_table.csv`, `cavity_profile_summary_table.csv`, readable CSV variants, and comparison plots under `experiments/benchmark_summary/figures/`. Runs launched with `--quick` are tagged as `run_type=smoke`; they are useful for checking plumbing, but collapse rates are not evaluated for smoke runs. Benchmark summaries include unweighted validation/data/PDE/BC losses so adaptive loss weights do not hide collateral damage.
+
+External cavity profile references can be passed as CSV:
+
+```bash
+python scripts/run_lid_driven_cavity.py --method both --seeds 0 1 2 --reynolds 100 --reference external --reference_path data/references/lid_driven_cavity/my_profiles.csv
+```
+
+Expected centerline CSV columns are `re,x,y,u_ref,v_ref`; either `u_ref` or `v_ref` may be blank for rows belonging to the other profile.
 
 ## Outputs
 

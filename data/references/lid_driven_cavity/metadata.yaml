@@ -1,0 +1,14 @@
+name: Ghia et al. 1982 lid-driven cavity centerline profiles
+source:
+  paper: "Ghia, U.; Ghia, K. N.; Shin, C. T. High-Re solutions for incompressible flow using the Navier-Stokes equations and a multigrid method. Journal of Computational Physics 48(3), 387-411, 1982."
+  u_profile_url: "https://gist.github.com/ivan-pi/3e9326d18a366ffe6a8e5bfda6353219"
+  v_profile_url: "https://gist.github.com/ivan-pi/ghiav.txt"
+coordinates:
+  domain: "[0, 1] x [0, 1]"
+  u_profile: "u velocity along vertical centerline x=0.5"
+  v_profile: "v velocity along horizontal centerline y=0.5"
+available_reynolds: [100, 400, 1000]
+notes:
+  - "Velocity is nondimensionalized by lid speed."
+  - "These are profile references, not full-field CFD data."
+  - "Some public transcriptions note a suspected typo in the Re=400 v-profile at x=0.9063; the tabulated Ghia value is kept unchanged."

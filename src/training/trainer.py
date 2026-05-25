@@ -131,7 +131,17 @@ class ExperimentTrainer:
         if name in {"boundary_condition_stress_test", "bc_stress"}:
             return BoundaryStressBoxFlow(**rectangular)
         if name in {"lid_driven_cavity", "cavity"}:
-            return LidDrivenCavityQualitative(**rectangular, lid_velocity=float(cfg.get("lid_velocity", 1.0)))
+            full_field_reference_path = cfg.get("full_field_reference_path")
+            return LidDrivenCavityQualitative(
+                **rectangular,
+                lid_velocity=float(cfg.get("lid_velocity", 1.0)),
+                reference=str(cfg.get("reference", "none")),
+                reference_path=cfg.get("reference_path"),
+                full_field_reference_path=full_field_reference_path,
+                profile_only=bool(cfg.get("profile_only", full_field_reference_path is None)),
+                has_reference=bool(full_field_reference_path) and not bool(cfg.get("profile_only", False)),
+                reference_kind="full_field_cfd" if full_field_reference_path else str(cfg.get("reference", "residual_only")),
+            )
         if name in {"rectangular_aspect_ratio", "rectangular_aspect_ratio_sweep"}:
             return PoiseuilleChannelFlow(**rectangular)
         raise NotImplementedError(f"Unknown benchmark: {name}.")

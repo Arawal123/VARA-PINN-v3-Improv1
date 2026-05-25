@@ -40,6 +40,12 @@ METRICS = [
     "u_boundary_rmse",
     "v_boundary_rmse",
     "boundary_speed_rmse",
+    "u_centerline_rmse",
+    "v_centerline_rmse",
+    "u_centerline_rel_l2",
+    "v_centerline_rel_l2",
+    "centerline_profile_score",
+    "cavity_benchmark_score",
     "unweighted_data_loss",
     "unweighted_pde_loss",
     "unweighted_bc_loss",
@@ -72,9 +78,12 @@ def main() -> None:
     collapse.to_csv(out / "collapse_rate_table.csv", index=False)
     seedwise = build_seedwise(df)
     seedwise.to_csv(out / "seedwise_comparison_table.csv", index=False)
+    cavity = build_cavity_table(methodwise)
+    cavity.to_csv(out / "cavity_profile_summary_table.csv", index=False)
     build_readable(df).to_csv(out / "combined_results_readable.csv", index=False)
     build_readable(methodwise).to_csv(out / "methodwise_mean_std_readable.csv", index=False)
     build_readable(seedwise).to_csv(out / "seedwise_comparison_readable.csv", index=False)
+    build_readable(cavity).to_csv(out / "cavity_profile_summary_readable.csv", index=False)
     save_bar_plots(methodwise, fig_dir)
     save_seedwise_scatter(df, fig_dir)
 
@@ -85,9 +94,11 @@ def main() -> None:
         "collapse_rate_table.csv",
         "seedwise_comparison_table.csv",
         "methodwise_mean_std_table.csv",
+        "cavity_profile_summary_table.csv",
         "combined_results_readable.csv",
         "methodwise_mean_std_readable.csv",
         "seedwise_comparison_readable.csv",
+        "cavity_profile_summary_readable.csv",
     ]:
         print(f"  {out / name}")
     print(f"  {fig_dir}")
@@ -123,6 +134,7 @@ def collect_rows(results_dir: Path) -> list[dict]:
             "most_frequently_targeted_variable": data.get("most_frequently_targeted_variable"),
             "most_frequently_targeted_patch": data.get("most_frequently_targeted_patch"),
             "collapsed": bool(data.get("collapsed", False)),
+            "cavity_profile_reference_source": data.get("cavity_profile_reference_source", ""),
         }
         for metric in METRICS:
             row[metric] = data.get(metric, np.nan)
@@ -157,6 +169,31 @@ def build_readable(df: pd.DataFrame) -> pd.DataFrame:
         else:
             readable[col] = readable[col].where(pd.notna(readable[col]), "N/A")
     return readable
+
+
+def build_cavity_table(methodwise: pd.DataFrame) -> pd.DataFrame:
+    if methodwise.empty or "benchmark" not in methodwise:
+        return pd.DataFrame()
+    cavity = methodwise[methodwise["benchmark"] == "lid_driven_cavity"].copy()
+    keep = [
+        "benchmark",
+        "run_type",
+        "method",
+        "n_runs",
+        "u_centerline_rmse_mean",
+        "u_centerline_rmse_std",
+        "v_centerline_rmse_mean",
+        "v_centerline_rmse_std",
+        "centerline_profile_score_mean",
+        "centerline_profile_score_std",
+        "pde_residual_mean_mean",
+        "continuity_residual_mean_mean",
+        "momentum_residual_mean_mean",
+        "boundary_condition_error_mean",
+        "unweighted_validation_loss_mean",
+        "cavity_benchmark_score_mean",
+    ]
+    return cavity[[col for col in keep if col in cavity.columns]]
 
 
 def build_collapse(df: pd.DataFrame) -> pd.DataFrame:
@@ -235,6 +272,8 @@ def save_bar_plots(methodwise: pd.DataFrame, fig_dir: Path) -> None:
             "unweighted_validation_loss",
             "boundary_condition_error",
             "boundary_speed_rmse",
+            "centerline_profile_score",
+            "cavity_benchmark_score",
         ]:
             v = group[group["method"] == "vanilla"]
             a = group[group["method"] == "vara"]

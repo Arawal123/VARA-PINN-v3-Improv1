@@ -8,6 +8,12 @@ from math import pi
 import numpy as np
 import torch
 
+from src.physics.cavity_reference import (
+    interpolate_full_field,
+    load_full_field_reference,
+    load_lid_cavity_profile_reference,
+)
+
 
 @dataclass(frozen=True)
 class RectangularBenchmarkBase:
@@ -142,8 +148,36 @@ class LidDrivenCavityQualitative(RectangularBenchmarkBase):
     """Boundary/residual-only lid-driven cavity benchmark without fake interior truth."""
 
     lid_velocity: float = 1.0
+    reference: str = "none"
+    reference_path: str | None = None
+    full_field_reference_path: str | None = None
+    profile_only: bool = True
     reference_kind: str = "residual_only"
     has_reference: bool = False
+
+    @property
+    def has_profile_reference(self) -> bool:
+        return self.reference.lower() != "none" or self.reference_path is not None
+
+    def profile_reference_np(self) -> dict[str, np.ndarray | str]:
+        profile = load_lid_cavity_profile_reference(self.reference, self.reynolds, self.reference_path)
+        x_mid = 0.5 * (self.x_min + self.x_max)
+        y_mid = 0.5 * (self.y_min + self.y_max)
+        out: dict[str, np.ndarray | str] = {"source": profile.source}
+        if profile.has_u:
+            y_norm = profile.u_profile["y"].to_numpy(dtype=float)
+            out["u_xy"] = np.column_stack([np.full_like(y_norm, x_mid), self.y_min + y_norm * self.height])
+            out["u_ref"] = profile.u_profile["u_ref"].to_numpy(dtype=float).reshape(-1, 1)
+        if profile.has_v:
+            x_norm = profile.v_profile["x"].to_numpy(dtype=float)
+            out["v_xy"] = np.column_stack([self.x_min + x_norm * self.width, np.full_like(x_norm, y_mid)])
+            out["v_ref"] = profile.v_profile["v_ref"].to_numpy(dtype=float).reshape(-1, 1)
+        return out
+
+    def exact_np(self, xy: np.ndarray) -> dict[str, np.ndarray]:
+        if self.has_reference and self.full_field_reference_path is not None:
+            return interpolate_full_field(load_full_field_reference(self.full_field_reference_path), xy)
+        return super().exact_np(xy)
 
     def _exact_torch_xy(self, x: torch.Tensor, y: torch.Tensor) -> dict[str, torch.Tensor]:
         tol = 1e-5

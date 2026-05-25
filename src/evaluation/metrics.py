@@ -107,6 +107,13 @@ def evaluate_on_grid(
         "u_boundary_rmse": boundary_metrics["u_boundary_rmse"],
         "v_boundary_rmse": boundary_metrics["v_boundary_rmse"],
         "boundary_speed_rmse": boundary_metrics["boundary_speed_rmse"],
+        "u_centerline_rmse": float("nan"),
+        "v_centerline_rmse": float("nan"),
+        "u_centerline_rel_l2": float("nan"),
+        "v_centerline_rel_l2": float("nan"),
+        "centerline_profile_score": float("nan"),
+        "cavity_benchmark_score": float("nan"),
+        "cavity_profile_reference_source": "",
         "unweighted_data_loss": float("nan"),
         "unweighted_pde_loss": float(np.mean(pde_loss)),
         "unweighted_bc_loss": unweighted_bc_loss,
@@ -148,6 +155,7 @@ def evaluate_on_grid(
                 "unweighted_data_loss": data_loss,
             }
         )
+    metrics.update(_cavity_profile_metrics(model, benchmark, device))
     metrics["unweighted_validation_loss"] = _finite_sum(
         [
             metrics["unweighted_pde_loss"],
@@ -155,7 +163,57 @@ def evaluate_on_grid(
             0.0 if not has_reference else metrics["unweighted_data_loss"],
         ]
     )
+    if benchmark.__class__.__name__.lower().startswith("liddrivencavity"):
+        metrics["cavity_benchmark_score"] = _finite_sum(
+            [
+                metrics["centerline_profile_score"],
+                metrics["pde_residual_mean"],
+                metrics["continuity_residual_mean"],
+                metrics["momentum_residual_mean"],
+                metrics["boundary_condition_error"],
+            ]
+        )
     return metrics
+
+
+def _cavity_profile_metrics(
+    model: torch.nn.Module,
+    benchmark: Any,
+    device: torch.device,
+) -> dict[str, float | str]:
+    out: dict[str, float | str] = {
+        "u_centerline_rmse": float("nan"),
+        "v_centerline_rmse": float("nan"),
+        "u_centerline_rel_l2": float("nan"),
+        "v_centerline_rel_l2": float("nan"),
+        "centerline_profile_score": float("nan"),
+        "cavity_profile_reference_source": "",
+    }
+    if not bool(getattr(benchmark, "has_profile_reference", False)):
+        return out
+    profile = benchmark.profile_reference_np()
+    out["cavity_profile_reference_source"] = str(profile.get("source", ""))
+    pieces = []
+    if "u_xy" in profile and "u_ref" in profile:
+        pred = _predict_field(model, np.asarray(profile["u_xy"], dtype=float), device)[:, 0:1]
+        ref = np.asarray(profile["u_ref"], dtype=float)
+        out["u_centerline_rmse"] = rmse(pred, ref)
+        out["u_centerline_rel_l2"] = relative_l2(pred, ref)
+        pieces.append(float(out["u_centerline_rmse"]))
+    if "v_xy" in profile and "v_ref" in profile:
+        pred = _predict_field(model, np.asarray(profile["v_xy"], dtype=float), device)[:, 1:2]
+        ref = np.asarray(profile["v_ref"], dtype=float)
+        out["v_centerline_rmse"] = rmse(pred, ref)
+        out["v_centerline_rel_l2"] = relative_l2(pred, ref)
+        pieces.append(float(out["v_centerline_rmse"]))
+    out["centerline_profile_score"] = float(sum(pieces)) if pieces else float("nan")
+    return out
+
+
+def _predict_field(model: torch.nn.Module, coords_np: np.ndarray, device: torch.device) -> np.ndarray:
+    coords = torch.tensor(coords_np, dtype=torch.float32, device=device)
+    with torch.no_grad():
+        return model(coords).detach().cpu().numpy()
 
 
 def _boundary_error(

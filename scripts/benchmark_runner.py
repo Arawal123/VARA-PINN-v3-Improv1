@@ -46,7 +46,16 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "lid_driven_cavity": {
         "benchmark": "lid_driven_cavity",
-        "benchmark_params": {"reynolds": 100.0, "x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "lid_velocity": 1.0},
+        "benchmark_params": {
+            "reynolds": 100.0,
+            "x_min": 0.0,
+            "x_max": 1.0,
+            "y_min": 0.0,
+            "y_max": 1.0,
+            "lid_velocity": 1.0,
+            "reference": "ghia",
+            "profile_only": True,
+        },
         "diagnostics": {"mode": "residual_only"},
         "training": {"n_data": 0},
         "local_controller": {
@@ -60,10 +69,15 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
                 "momentum": 0.75,
                 "boundary": 1.5,
                 "unweighted_validation": 0.5,
+                "profile": 2.0,
             },
             "continuity_collateral_tolerance": 0.05,
             "boundary_collateral_tolerance": 0.05,
             "validation_loss_tolerance": 0.02,
+            "initial_strength": 0.5,
+            "local_velocity_weight_max": 1.5,
+            "local_pde_weight_max": 1.5,
+            "local_bc_weight_max": 4.0,
         },
     },
     "double_vortex_box": {
@@ -140,6 +154,11 @@ def parser_for(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--device", default=None)
     parser.add_argument("--output_dir", default="experiments")
+    parser.add_argument("--reynolds", type=float, default=None)
+    parser.add_argument("--reference", choices=["ghia", "external", "none"], default=None)
+    parser.add_argument("--reference_path", default=None)
+    parser.add_argument("--full_field_reference_path", default=None)
+    parser.add_argument("--profile_only", action="store_true")
     return parser
 
 
@@ -155,6 +174,17 @@ def run_named_benchmark(
     config["experiments"]["root"] = args.output_dir
     if args.device:
         config["device"] = args.device
+    if benchmark_name == "lid_driven_cavity":
+        params = dict(config.get("benchmark_params", {}))
+        if args.reynolds is not None:
+            params["reynolds"] = float(args.reynolds)
+        params["reference"] = args.reference or params.get("reference", "ghia")
+        if args.reference_path:
+            params["reference_path"] = args.reference_path
+        if args.full_field_reference_path:
+            params["full_field_reference_path"] = args.full_field_reference_path
+        params["profile_only"] = bool(args.profile_only or not args.full_field_reference_path)
+        config["benchmark_params"] = params
     if aspect_ratio is not None:
         params = dict(config.get("benchmark_params", {}))
         params["x_min"] = 0.0
@@ -165,6 +195,7 @@ def run_named_benchmark(
         config["benchmark"] = "rectangular_aspect_ratio"
     if config["benchmark"] == "lid_driven_cavity":
         config["training"] = {**config.get("training", {}), "n_data": 0}
+        config["diagnostics"] = {**config.get("diagnostics", {}), "mode": "residual_only"}
     if args.quick:
         config = deep_update(
             config,
