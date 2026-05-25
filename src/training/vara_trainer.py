@@ -230,6 +230,7 @@ class VARATrainer(ExperimentTrainer):
         cycles = int(train_cfg.get("adaptive_cycles", 2))
         epochs_per_cycle = int(train_cfg.get("epochs_per_cycle", 100))
         trial_epochs = self.local_controller.config.trial_epochs if constrained else 0
+        warmup_cycles = max(0, int(self.local_controller.config.warmup_cycles))
         main_epochs = max(1, epochs_per_cycle - trial_epochs)
         batch = self.initial_batch()
         save_patch_grid_overlay(self.patch_grid, self.local_figure_dir / "patch_grid.png")
@@ -246,6 +247,50 @@ class VARATrainer(ExperimentTrainer):
             metrics_before = self._validation_metrics(coords)
             self._log_patch_scores(cycle, names, raw_before, norm_before)
             self._save_local_patch_figures(cycle, names, raw_before)
+
+            if cycle < warmup_cycles:
+                controller_snapshot = self.local_controller.snapshot()
+                decision_metrics = self.local_controller.evaluate_acceptance(
+                    [],
+                    raw_before,
+                    raw_before,
+                    names,
+                    metrics_before,
+                    metrics_before,
+                    constrained=False,
+                )[1]
+                decision = self._build_local_decision(
+                    cycle=cycle,
+                    constrained=constrained,
+                    accepted=True,
+                    interventions=[],
+                    old_local_weights=deepcopy(controller_snapshot["local_weights"]),
+                    old_sampling=deepcopy(controller_snapshot["sampling_priorities"]),
+                    metrics_before=metrics_before,
+                    metrics_after=metrics_before,
+                    raw_before=raw_before,
+                    raw_after=raw_before,
+                    diagnostic_names=names,
+                    decision_metrics=decision_metrics,
+                    rejection_reason="warmup_no_intervention",
+                )
+                decision["warmup_skip"] = True
+                self.local_decisions.append(decision)
+                self.local_action_logger.log({"cycle": cycle, "mode": self.mode, "actions": [], "decision": decision})
+                self.local_decision_logger.log(self._flat_local_decision(decision))
+                self._log_local_weights(cycle)
+                save_active_intervention_map(
+                    [],
+                    self.patch_grid,
+                    self.local_figure_dir / f"local_action_map_cycle_{cycle:03d}.png",
+                    f"Local actions cycle {cycle} warmup",
+                )
+                self.metrics_logger.log(
+                    {"cycle": cycle, "phase": "local_warmup", **metrics_before, "J_score": self.local_controller.objective(metrics_before)}
+                )
+                self.maybe_checkpoint(cycle, metrics_before)
+                batch = self._resample_local_batch(maps_before, coords, [], adaptive=False)
+                continue
 
             interventions = self.local_controller.propose(weak_regions)
             cycle_action_records: list[dict[str, Any]] = []
@@ -564,6 +609,7 @@ class VARATrainer(ExperimentTrainer):
             "accepted": decision["accepted"],
             "rejected": decision["rejected"],
             "rollback_triggered": decision["rollback_triggered"],
+            "warmup_skip": decision.get("warmup_skip", False),
             "rejection_reason": decision.get("rejection_reason", ""),
             "targeted_variables": ",".join(decision["targeted_variables"]),
             "targeted_patches": ",".join(str(pid) for pid in decision["targeted_patches"]),
@@ -645,17 +691,17 @@ class VARATrainer(ExperimentTrainer):
             if n_focus > 0 and patch_ids:
                 xy_bc_np = np.vstack(
                     [
-                        self.boundary_sampler.sample_numpy(n_bc - n_focus),
+                        self._sample_boundary_numpy(n_bc - n_focus),
                         self.boundary_sampler.sample_patch_numpy(self.patch_grid, patch_ids, n_focus),
                     ]
                 )
                 xy_bc = torch.tensor(xy_bc_np, dtype=torch.float32, device=self.device)
             else:
-                xy_bc = self.boundary_sampler.sample(n_bc)
+                xy_bc = self._sample_boundary(n_bc)
         else:
             xy_f = self.uniform_sampler.sample(n_f)
             xy_data = self.uniform_sampler.sample(n_data)
-            xy_bc = self.boundary_sampler.sample(n_bc)
+            xy_bc = self._sample_boundary(n_bc)
         return self.make_batch(xy_f, xy_bc, xy_data)
 
     def _most_frequent(self, key: str) -> str | int | None:

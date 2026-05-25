@@ -29,11 +29,11 @@ optimizer:
   lr: 0.001
 
 training:
-  adaptive_cycles: 2
-  epochs_per_cycle: 30
-  log_every: 10
-  n_collocation: 512
-  n_boundary: 128
+  adaptive_cycles: 4
+  epochs_per_cycle: 100
+  log_every: 25
+  n_collocation: 2048
+  n_boundary: 768
   n_data: 0
   weights:
     pde: 1.0
@@ -48,12 +48,12 @@ training:
     pressure_gradient: 0.0
 
 validation:
-  nx: 36
-  ny: 36
-
-test:
   nx: 48
   ny: 48
+
+test:
+  nx: 64
+  ny: 64
 
 diagnostics:
   mode: residual_only
@@ -62,6 +62,8 @@ diagnostics:
     - momentum_u_residual
     - momentum_v_residual
     - aggregate_pde_residual
+    - centerline_pde_residual
+    - centerline_continuity_residual
     - boundary_violation
   aggregation: mean
   aggregation_percentile: 90.0
@@ -87,33 +89,39 @@ local_controller:
   collateral_tolerance: 0.10
   pressure_collateral_tolerance: 0.05
   continuity_collateral_tolerance: 0.05
-  boundary_collateral_tolerance: 0.05
-  validation_loss_tolerance: 0.02
-  trial_epochs: 5
-  max_actions_per_cycle: 4
-  initial_strength: 0.5
+  boundary_collateral_tolerance: 0.02
+  validation_loss_tolerance: 0.015
+  trial_epochs: 10
+  max_actions_per_cycle: 3
+  initial_strength: 0.35
   damping_factor: 0.5
+  warmup_cycles: 1
   tiny_j_tolerance: 0.002
   strong_target_factor: 2.0
   local_velocity_weight_max: 1.5
   local_pressure_weight_max: 1.5
   local_omega_weight_max: 1.5
   local_pde_weight_max: 1.5
-  local_bc_weight_max: 4.0
+  local_bc_weight_max: 5.0
   objective_weights:
     residual: 0.5
-    continuity: 1.5
+    continuity: 1.75
     momentum: 0.75
-    boundary: 1.5
-    unweighted_validation: 0.5
+    boundary: 2.0
+    unweighted_validation: 0.75
 
 sampling:
   mixture:
-    uniform: 0.50
+    uniform: 0.45
     pde_residual: 0.25
-    pressure_vorticity: 0.10
+    pressure_vorticity: 0.08
     velocity: 0.10
-    boundary: 0.05
+    boundary: 0.12
+  cavity_boundary:
+    enabled: true
+    lid_fraction: 0.45
+    corner_fraction: 0.25
+    corner_width: 0.12
 
 experiments:
   root: experiments

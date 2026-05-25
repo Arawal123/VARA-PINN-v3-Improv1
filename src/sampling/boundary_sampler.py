@@ -36,6 +36,48 @@ class BoundarySampler:
     def sample(self, n: int) -> torch.Tensor:
         return torch.tensor(self.sample_numpy(n), dtype=torch.float32, device=self.device)
 
+    def sample_lid_cavity_numpy(
+        self,
+        n: int,
+        lid_fraction: float = 0.45,
+        corner_fraction: float = 0.25,
+        corner_width: float = 0.12,
+    ) -> np.ndarray:
+        """Sample cavity walls with extra mass on the moving lid and lid-corner discontinuities."""
+        if n <= 0:
+            return np.zeros((0, 2), dtype=float)
+        lid_fraction = float(np.clip(lid_fraction, 0.0, 1.0))
+        corner_fraction = float(np.clip(corner_fraction, 0.0, 1.0))
+        if lid_fraction + corner_fraction > 0.95:
+            scale = 0.95 / (lid_fraction + corner_fraction)
+            lid_fraction *= scale
+            corner_fraction *= scale
+
+        n_lid = int(round(n * lid_fraction))
+        n_corner = int(round(n * corner_fraction))
+        n_uniform = max(0, n - n_lid - n_corner)
+        pieces = [self.sample_numpy(n_uniform), self._sample_lid(n_lid), self._sample_lid_corners(n_corner, corner_width)]
+        out = np.vstack([p for p in pieces if p.size])
+        if out.shape[0] < n:
+            out = np.vstack([out, self.sample_numpy(n - out.shape[0])])
+        elif out.shape[0] > n:
+            out = out[:n]
+        self.rng.shuffle(out)
+        return out
+
+    def sample_lid_cavity(
+        self,
+        n: int,
+        lid_fraction: float = 0.45,
+        corner_fraction: float = 0.25,
+        corner_width: float = 0.12,
+    ) -> torch.Tensor:
+        return torch.tensor(
+            self.sample_lid_cavity_numpy(n, lid_fraction, corner_fraction, corner_width),
+            dtype=torch.float32,
+            device=self.device,
+        )
+
     def sample_patch_numpy(self, patch_grid: object, patch_ids: list[int], n: int) -> np.ndarray:
         """Sample rectangular boundary points restricted to selected patch spans."""
         if n <= 0 or not patch_ids:
@@ -74,3 +116,31 @@ class BoundarySampler:
     def sample_patch(self, patch_grid: object, patch_ids: list[int], n: int) -> torch.Tensor:
         """Torch wrapper for patch-restricted boundary sampling."""
         return torch.tensor(self.sample_patch_numpy(patch_grid, patch_ids, n), dtype=torch.float32, device=self.device)
+
+    def _sample_lid(self, n: int) -> np.ndarray:
+        if n <= 0:
+            return np.zeros((0, 2), dtype=float)
+        x0, x1, _y0, y1 = self.bounds
+        x = self.rng.uniform(x0, x1, n)
+        return np.column_stack([x, np.full(n, y1)])
+
+    def _sample_lid_corners(self, n: int, corner_width: float) -> np.ndarray:
+        if n <= 0:
+            return np.zeros((0, 2), dtype=float)
+        x0, x1, y0, y1 = self.bounds
+        span = min(max(x1 - x0, 1e-12), max(y1 - y0, 1e-12))
+        width = max(float(corner_width) * span, 1e-9)
+        width_x = min(width, x1 - x0)
+        width_y = min(width, y1 - y0)
+        pts = np.zeros((n, 2), dtype=float)
+        choices = self.rng.integers(0, 4, n)
+        for i, choice in enumerate(choices):
+            if choice == 0:
+                pts[i] = [self.rng.uniform(x0, x0 + width_x), y1]
+            elif choice == 1:
+                pts[i] = [self.rng.uniform(x1 - width_x, x1), y1]
+            elif choice == 2:
+                pts[i] = [x0, self.rng.uniform(y1 - width_y, y1)]
+            else:
+                pts[i] = [x1, self.rng.uniform(y1 - width_y, y1)]
+        return pts

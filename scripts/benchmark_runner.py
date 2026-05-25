@@ -56,7 +56,18 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
             "reference": "ghia",
             "profile_only": True,
         },
-        "diagnostics": {"mode": "residual_only"},
+        "diagnostics": {
+            "mode": "residual_only",
+            "variables": [
+                "continuity_residual",
+                "momentum_u_residual",
+                "momentum_v_residual",
+                "aggregate_pde_residual",
+                "centerline_pde_residual",
+                "centerline_continuity_residual",
+                "boundary_violation",
+            ],
+        },
         "training": {"n_data": 0},
         "local_controller": {
             "objective_weights": {
@@ -65,18 +76,34 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
                 "p": 0.0,
                 "omega": 0.0,
                 "residual": 0.5,
-                "continuity": 1.5,
+                "continuity": 1.75,
                 "momentum": 0.75,
-                "boundary": 1.5,
-                "unweighted_validation": 0.5,
+                "boundary": 2.0,
+                "unweighted_validation": 0.75,
             },
             "continuity_collateral_tolerance": 0.05,
-            "boundary_collateral_tolerance": 0.05,
-            "validation_loss_tolerance": 0.02,
-            "initial_strength": 0.5,
+            "boundary_collateral_tolerance": 0.02,
+            "validation_loss_tolerance": 0.015,
+            "initial_strength": 0.35,
+            "warmup_cycles": 1,
             "local_velocity_weight_max": 1.5,
             "local_pde_weight_max": 1.5,
-            "local_bc_weight_max": 4.0,
+            "local_bc_weight_max": 5.0,
+        },
+        "sampling": {
+            "mixture": {
+                "uniform": 0.45,
+                "pde_residual": 0.25,
+                "pressure_vorticity": 0.08,
+                "velocity": 0.10,
+                "boundary": 0.12,
+            },
+            "cavity_boundary": {
+                "enabled": True,
+                "lid_fraction": 0.45,
+                "corner_fraction": 0.25,
+                "corner_width": 0.12,
+            },
         },
     },
     "double_vortex_box": {
@@ -194,21 +221,26 @@ def run_named_benchmark(
         config["benchmark"] = "rectangular_aspect_ratio"
     if config["benchmark"] == "lid_driven_cavity":
         config["training"] = {**config.get("training", {}), "n_data": 0}
-        config["diagnostics"] = {**config.get("diagnostics", {}), "mode": "residual_only"}
+        config["diagnostics"] = {
+            **config.get("diagnostics", {}),
+            "mode": "residual_only",
+            "variables": BENCHMARK_DEFAULTS["lid_driven_cavity"]["diagnostics"]["variables"],
+        }
     if args.quick:
+        is_cavity = config["benchmark"] == "lid_driven_cavity"
         config = deep_update(
             config,
             {
                 "model": {"hidden_layers": [32, 32]},
                 "training": {
-                    "adaptive_cycles": 1,
+                    "adaptive_cycles": 2 if is_cavity else 1,
                     "epochs_per_cycle": 5,
                     "log_every": 5,
                     "n_collocation": 128,
-                    "n_boundary": 64,
-                    "n_data": 0 if config["benchmark"] == "lid_driven_cavity" else 64,
+                    "n_boundary": 96 if is_cavity else 64,
+                    "n_data": 0 if is_cavity else 64,
                 },
-                "local_controller": {"trial_epochs": 2, "max_actions_per_cycle": 2},
+                "local_controller": {"trial_epochs": 2, "max_actions_per_cycle": 2, "warmup_cycles": 1 if is_cavity else 0},
                 "validation": {"nx": 16, "ny": 16},
                 "test": {"nx": 20, "ny": 20},
             },

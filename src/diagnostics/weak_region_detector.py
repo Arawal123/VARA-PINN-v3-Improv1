@@ -105,6 +105,8 @@ def _failure_type(name: str, confidence: float) -> str:
         root = "vorticity"
     elif "u_error" in name or "v_error" in name or "speed" in name:
         root = "velocity"
+    elif "centerline" in name:
+        root = "centerline_residual"
     elif "continuity" in name:
         root = "divergence"
     elif "momentum" in name or "pde" in name:
@@ -115,4 +117,3 @@ def _failure_type(name: str, confidence: float) -> str:
         root = "mixed"
     suffix = "dominant" if confidence >= 0.5 else "mixed"
     return f"{root}_{suffix}"
-

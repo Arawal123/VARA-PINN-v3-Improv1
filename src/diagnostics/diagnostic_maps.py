@@ -101,7 +101,24 @@ class DiagnosticMapBuilder:
 
         maps["aggregate_pde_residual"] = maps["pde_residual"]
         maps["boundary_violation"] = self._boundary_violation(coords_np, boundary_coords_np)
+        if self._is_lid_driven_cavity():
+            centerline_weight = self._centerline_weight(coords_np)
+            maps["centerline_pde_residual"] = maps["pde_residual"] * centerline_weight
+            maps["centerline_continuity_residual"] = maps["continuity_residual"] * centerline_weight
         return maps
+
+    def _is_lid_driven_cavity(self) -> bool:
+        return self.benchmark.__class__.__name__.lower() == "liddrivencavityqualitative"
+
+    def _centerline_weight(self, coords_np: np.ndarray) -> np.ndarray:
+        x0, x1, y0, y1 = self.benchmark.bounds
+        x_mid = 0.5 * (x0 + x1)
+        y_mid = 0.5 * (y0 + y1)
+        sigma_x = max((x1 - x0) / 10.0, 1e-8)
+        sigma_y = max((y1 - y0) / 10.0, 1e-8)
+        wx = np.exp(-((coords_np[:, 0:1] - x_mid) / sigma_x) ** 2)
+        wy = np.exp(-((coords_np[:, 1:2] - y_mid) / sigma_y) ** 2)
+        return np.maximum(wx, wy)
 
     def _boundary_violation(self, coords_np: np.ndarray, boundary_coords_np: np.ndarray | None) -> np.ndarray:
         x0, x1, y0, y1 = self.benchmark.bounds

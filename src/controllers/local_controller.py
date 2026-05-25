@@ -21,6 +21,8 @@ METRIC_BY_DIAGNOSTIC = {
     "momentum_v_residual": "momentum_residual_mean",
     "aggregate_pde_residual": "pde_residual_mean",
     "pde_residual": "pde_residual_mean",
+    "centerline_pde_residual": "pde_residual_mean",
+    "centerline_continuity_residual": "continuity_residual_mean",
     "boundary_violation": "boundary_condition_error",
 }
 
@@ -47,6 +49,7 @@ class LocalControllerConfig:
     continuity_collateral_tolerance: float = 0.05
     boundary_collateral_tolerance: float = 0.05
     validation_loss_tolerance: float = 0.02
+    warmup_cycles: int = 0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "LocalControllerConfig":
@@ -70,6 +73,7 @@ class LocalControllerConfig:
             continuity_collateral_tolerance=float(data.get("continuity_collateral_tolerance", 0.05)),
             boundary_collateral_tolerance=float(data.get("boundary_collateral_tolerance", 0.05)),
             validation_loss_tolerance=float(data.get("validation_loss_tolerance", 0.02)),
+            warmup_cycles=int(data.get("warmup_cycles", 0)),
         )
 
     @property
@@ -275,6 +279,10 @@ class LocalVARAController:
             return "increase_local_vorticity", ["omega", "pde"]
         if "continuity" in variable:
             return "increase_local_divergence", ["continuity", "pde"]
+        if "centerline_continuity" in variable:
+            return "increase_local_divergence", ["continuity", "pde"]
+        if "centerline_pde" in variable:
+            return "increase_local_pde", ["pde"]
         if "momentum_u" in variable:
             return "increase_local_momentum", ["momentum_u", "pde"]
         if "momentum_v" in variable:

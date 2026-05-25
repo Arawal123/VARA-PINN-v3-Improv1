@@ -152,9 +152,26 @@ class ExperimentTrainer:
         n_bc = int(train_cfg.get("n_boundary", 256))
         n_data = int(train_cfg.get("n_data", 256))
         xy_f = self.uniform_sampler.sample(n_f)
-        xy_bc = self.boundary_sampler.sample(n_bc)
+        xy_bc = self._sample_boundary(n_bc)
         xy_data = self.uniform_sampler.sample(n_data)
         return self.make_batch(xy_f, xy_bc, xy_data)
+
+    def _sample_boundary_numpy(self, n: int) -> np.ndarray:
+        boundary_cfg = self.config.get("sampling", {}).get("cavity_boundary", {})
+        if self._is_lid_driven_cavity() and bool(boundary_cfg.get("enabled", True)):
+            return self.boundary_sampler.sample_lid_cavity_numpy(
+                n,
+                lid_fraction=float(boundary_cfg.get("lid_fraction", 0.45)),
+                corner_fraction=float(boundary_cfg.get("corner_fraction", 0.25)),
+                corner_width=float(boundary_cfg.get("corner_width", 0.12)),
+            )
+        return self.boundary_sampler.sample_numpy(n)
+
+    def _sample_boundary(self, n: int) -> torch.Tensor:
+        return torch.tensor(self._sample_boundary_numpy(n), dtype=torch.float32, device=self.device)
+
+    def _is_lid_driven_cavity(self) -> bool:
+        return str(self.config.get("benchmark", "")).lower() in {"lid_driven_cavity", "cavity"}
 
     def make_batch(self, xy_f: torch.Tensor, xy_bc: torch.Tensor, xy_data: torch.Tensor) -> dict[str, Any]:
         with torch.no_grad():
@@ -269,7 +286,7 @@ class ExperimentTrainer:
         else:
             xy_f = self.uniform_sampler.sample(n_f)
             xy_data = self.uniform_sampler.sample(n_data)
-        xy_bc = self.boundary_sampler.sample(n_bc)
+        xy_bc = self._sample_boundary(n_bc)
         return self.make_batch(xy_f, xy_bc, xy_data)
 
     def evaluate_and_save_final(self) -> dict[str, float]:
