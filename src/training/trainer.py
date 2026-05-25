@@ -338,7 +338,9 @@ class ExperimentTrainer:
 
     def _collapsed(self, metrics: dict[str, Any]) -> bool:
         thresholds = self.config.get("collapse_thresholds", {})
-        for name in ["u_rel_l2", "v_rel_l2", "p_rel_l2_centered", "omega_rel_l2", "pde_residual_mean"]:
+        has_reference = bool(metrics.get("has_reference", True))
+        relative_names = ["u_rel_l2", "v_rel_l2", "p_rel_l2_centered", "omega_rel_l2"]
+        for name in relative_names:
             value = metrics.get(name)
             if value is None:
                 continue
@@ -346,12 +348,30 @@ class ExperimentTrainer:
                 numeric = float(value)
             except (TypeError, ValueError):
                 continue
-            if math.isnan(numeric) and name.endswith("_rel_l2"):
+            if math.isnan(numeric):
                 continue
             if not math.isfinite(numeric):
                 return True
-            default = 0.5 if name.endswith("_rel_l2") or name == "p_rel_l2_centered" else 5.0
-            if numeric > float(thresholds.get(name, default)):
+            if numeric > float(thresholds.get(name, 5.0)):
+                return True
+        if has_reference:
+            for name in ["u_rmse", "v_rmse", "p_rmse_centered", "omega_rmse"]:
+                value = metrics.get(name)
+                if value is None:
+                    continue
+                numeric = float(value)
+                if not math.isfinite(numeric):
+                    return True
+                if numeric > float(thresholds.get(name, 5.0)):
+                    return True
+        for name in ["pde_residual_mean", "continuity_residual_mean", "momentum_residual_mean", "final_total_loss"]:
+            value = metrics.get(name)
+            if value is None:
+                continue
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                return True
+            if numeric > float(thresholds.get(name, 10.0)):
                 return True
         bc = metrics.get("boundary_condition_error")
         if bc is not None and math.isfinite(float(bc)) and float(bc) > float(thresholds.get("boundary_condition_error", 1.0)):

@@ -22,6 +22,10 @@ METRICS = [
     "v_rel_l2",
     "p_rel_l2_centered",
     "omega_rel_l2",
+    "u_rmse",
+    "v_rmse",
+    "p_rmse_centered",
+    "omega_rmse",
     "pde_residual_mean",
     "continuity_residual_mean",
     "momentum_residual_mean",
@@ -149,7 +153,14 @@ def save_bar_plots(methodwise: pd.DataFrame, fig_dir: Path) -> None:
         labels = []
         vanilla = []
         vara = []
-        for metric in METRICS[:6]:
+        for metric in [
+            "u_rmse",
+            "v_rmse",
+            "p_rmse_centered",
+            "omega_rmse",
+            "pde_residual_mean",
+            "boundary_condition_error",
+        ]:
             v = group[group["method"] == "vanilla"]
             a = group[group["method"] == "vara"]
             if v.empty or a.empty:

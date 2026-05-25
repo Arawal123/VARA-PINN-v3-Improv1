@@ -12,8 +12,20 @@ from src.physics.kovasznay import center_pressure
 from src.physics.navier_stokes import navier_stokes_residuals
 
 
-def relative_l2(pred: np.ndarray, true: np.ndarray) -> float:
-    return float(np.linalg.norm(pred - true) / (np.linalg.norm(true) + 1e-12))
+def relative_l2(pred: np.ndarray, true: np.ndarray, min_reference_norm: float = 1e-8) -> float:
+    """Relative L2, undefined when the reference field is effectively zero."""
+    ref_norm = float(np.linalg.norm(true))
+    if ref_norm < min_reference_norm:
+        return float("nan")
+    return float(np.linalg.norm(pred - true) / ref_norm)
+
+
+def rmse(pred: np.ndarray, true: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((pred - true) ** 2)))
+
+
+def mae(pred: np.ndarray, true: np.ndarray) -> float:
+    return float(np.mean(np.abs(pred - true)))
 
 
 def evaluate_on_grid(
@@ -47,6 +59,18 @@ def evaluate_on_grid(
         "p_rel_l2_centered": float("nan"),
         "speed_rel_l2": float("nan"),
         "omega_rel_l2": float("nan"),
+        "u_rmse": float("nan"),
+        "v_rmse": float("nan"),
+        "p_rmse_centered": float("nan"),
+        "omega_rmse": float("nan"),
+        "u_mae": float("nan"),
+        "v_mae": float("nan"),
+        "p_mae_centered": float("nan"),
+        "omega_mae": float("nan"),
+        "u_reference_norm": float("nan"),
+        "v_reference_norm": float("nan"),
+        "p_reference_norm": float("nan"),
+        "omega_reference_norm": float("nan"),
         "pressure_gradient_error": float("nan"),
         "divergence_norm": float(np.mean(div)),
         "continuity_residual_mean": float(np.mean(np.abs(residuals["f_c"].detach().cpu().numpy()))),
@@ -77,6 +101,18 @@ def evaluate_on_grid(
                 "p_rel_l2_centered": relative_l2(p_c, p_ref_c),
                 "speed_rel_l2": relative_l2(speed, ref.get("speed", np.sqrt(ref["u"] ** 2 + ref["v"] ** 2))),
                 "omega_rel_l2": relative_l2(omega, ref["omega"]),
+                "u_rmse": rmse(u, ref["u"]),
+                "v_rmse": rmse(v, ref["v"]),
+                "p_rmse_centered": rmse(p_c, p_ref_c),
+                "omega_rmse": rmse(omega, ref["omega"]),
+                "u_mae": mae(u, ref["u"]),
+                "v_mae": mae(v, ref["v"]),
+                "p_mae_centered": mae(p_c, p_ref_c),
+                "omega_mae": mae(omega, ref["omega"]),
+                "u_reference_norm": float(np.linalg.norm(ref["u"])),
+                "v_reference_norm": float(np.linalg.norm(ref["v"])),
+                "p_reference_norm": float(np.linalg.norm(p_ref_c)),
+                "omega_reference_norm": float(np.linalg.norm(ref["omega"])),
                 "pressure_gradient_error": float(np.mean(p_grad_err)),
             }
         )
