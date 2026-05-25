@@ -23,6 +23,8 @@ METRIC_BY_DIAGNOSTIC = {
     "pde_residual": "pde_residual_mean",
     "centerline_pde_residual": "pde_residual_mean",
     "centerline_continuity_residual": "continuity_residual_mean",
+    "corner_pde_residual": "pde_residual_mean",
+    "corner_boundary_violation": "boundary_condition_error",
     "boundary_violation": "boundary_condition_error",
 }
 
@@ -184,6 +186,10 @@ class LocalVARAController:
             + float(weights.get("momentum", 0.0)) * self._metric(metrics, "momentum_residual_mean")
             + float(weights.get("boundary", 0.0)) * self._metric(metrics, "boundary_condition_error")
             + float(weights.get("unweighted_validation", 0.0)) * self._metric(metrics, "unweighted_validation_loss")
+            + float(weights.get("centerline_residual", 0.0)) * self._metric(metrics, "centerline_pde_residual_mean")
+            + float(weights.get("centerline_continuity", 0.0)) * self._metric(metrics, "centerline_continuity_residual_mean")
+            + float(weights.get("corner_residual", 0.0)) * self._metric(metrics, "corner_pde_residual_mean")
+            + float(weights.get("corner_boundary", 0.0)) * self._metric(metrics, "corner_boundary_error")
         )
 
     def evaluate_acceptance(
@@ -283,6 +289,10 @@ class LocalVARAController:
             return "increase_local_divergence", ["continuity", "pde"]
         if "centerline_pde" in variable:
             return "increase_local_pde", ["pde"]
+        if "corner_boundary" in variable:
+            return "increase_local_boundary", ["bc"]
+        if "corner_pde" in variable:
+            return "increase_local_pde", ["pde"]
         if "momentum_u" in variable:
             return "increase_local_momentum", ["momentum_u", "pde"]
         if "momentum_v" in variable:
@@ -330,6 +340,10 @@ class LocalVARAController:
             "momentum_residual_mean",
             "boundary_condition_error",
             "unweighted_validation_loss",
+            "centerline_pde_residual_mean",
+            "centerline_continuity_residual_mean",
+            "corner_pde_residual_mean",
+            "corner_boundary_error",
         ]:
             before = self._metric(before_metrics, metric_name)
             after = self._metric(after_metrics, metric_name)

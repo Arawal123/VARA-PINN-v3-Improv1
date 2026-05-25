@@ -63,13 +63,30 @@ def _activation(name: str) -> nn.Module:
     raise ValueError(f"Unsupported activation: {name}")
 
 
-def build_mlp_from_config(config: dict, bounds: tuple[float, float, float, float]) -> MLP:
+def build_mlp_from_config(config: dict, bounds: tuple[float, float, float, float]) -> nn.Module:
     """Build a velocity-pressure MLP from a config dictionary."""
     model_cfg = config.get("model", {})
     x0, x1, y0, y1 = bounds
     in_dim = int(model_cfg.get("input_dim", 2))
     lower = [x0, y0] if in_dim == 2 else [x0, y0, model_cfg.get("t_min", 0.0)]
     upper = [x1, y1] if in_dim == 2 else [x1, y1, model_cfg.get("t_max", 1.0)]
+    model_type = str(model_cfg.get("type", model_cfg.get("name", "mlp"))).lower()
+    if model_type in {"streamfunction", "streamfunction_mlp", "psi_p"}:
+        from .streamfunction_mlp import StreamfunctionMLP
+
+        bench_cfg = config.get("benchmark_params", {})
+        return StreamfunctionMLP(
+            in_dim=in_dim,
+            hidden_layers=model_cfg.get("hidden_layers", [96, 96, 96, 96]),
+            activation=model_cfg.get("activation", "tanh"),
+            input_lower=lower,
+            input_upper=upper,
+            lid_velocity=float(bench_cfg.get("lid_velocity", model_cfg.get("lid_velocity", 1.0))),
+            boundary_transform=bool(model_cfg.get("boundary_transform", True)),
+            enforce_lid_profile=bool(model_cfg.get("enforce_lid_profile", False)),
+            corner_eps=float(model_cfg.get("corner_eps", 0.08)),
+            include_vorticity_transport_loss=bool(model_cfg.get("include_vorticity_transport_loss", False)),
+        )
     return MLP(
         in_dim=in_dim,
         out_dim=int(model_cfg.get("output_dim", 3)),
@@ -78,4 +95,3 @@ def build_mlp_from_config(config: dict, bounds: tuple[float, float, float, float
         input_lower=lower,
         input_upper=upper,
     )
-

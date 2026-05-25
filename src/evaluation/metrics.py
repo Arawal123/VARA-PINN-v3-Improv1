@@ -103,6 +103,10 @@ def evaluate_on_grid(
         ),
         "pde_residual_mean": float(np.mean(pde)),
         "pde_residual_max": float(np.max(pde)),
+        "centerline_pde_residual_mean": _weighted_mean(pde, _centerline_weight(coords_np, benchmark)),
+        "centerline_continuity_residual_mean": _weighted_mean(div, _centerline_weight(coords_np, benchmark)),
+        "corner_pde_residual_mean": _weighted_mean(pde, _lid_corner_weight(coords_np, benchmark)),
+        "corner_boundary_error": _corner_boundary_error(model, benchmark, coords_np, device),
         "boundary_condition_error": _boundary_error(model, benchmark, coords_np, device),
         "u_boundary_rmse": boundary_metrics["u_boundary_rmse"],
         "v_boundary_rmse": boundary_metrics["v_boundary_rmse"],
@@ -168,12 +172,46 @@ def evaluate_on_grid(
             [
                 metrics["centerline_profile_score"],
                 metrics["pde_residual_mean"],
+                metrics["centerline_pde_residual_mean"],
+                metrics["centerline_continuity_residual_mean"],
                 metrics["continuity_residual_mean"],
                 metrics["momentum_residual_mean"],
                 metrics["boundary_condition_error"],
             ]
         )
     return metrics
+
+
+def _weighted_mean(values: np.ndarray, weights: np.ndarray) -> float:
+    vals = np.asarray(values, dtype=float).reshape(-1)
+    w = np.asarray(weights, dtype=float).reshape(-1)
+    denom = float(np.sum(w))
+    if denom <= 1e-12:
+        return float("nan")
+    return float(np.sum(vals * w) / denom)
+
+
+def _centerline_weight(coords_np: np.ndarray, benchmark: Any) -> np.ndarray:
+    if not benchmark.__class__.__name__.lower().startswith("liddrivencavity"):
+        return np.ones((coords_np.shape[0], 1), dtype=float)
+    x0, x1, y0, y1 = benchmark.bounds
+    x_mid = 0.5 * (x0 + x1)
+    y_mid = 0.5 * (y0 + y1)
+    sigma_x = max((x1 - x0) / 10.0, 1e-8)
+    sigma_y = max((y1 - y0) / 10.0, 1e-8)
+    wx = np.exp(-((coords_np[:, 0:1] - x_mid) / sigma_x) ** 2)
+    wy = np.exp(-((coords_np[:, 1:2] - y_mid) / sigma_y) ** 2)
+    return np.maximum(wx, wy)
+
+
+def _lid_corner_weight(coords_np: np.ndarray, benchmark: Any) -> np.ndarray:
+    if not benchmark.__class__.__name__.lower().startswith("liddrivencavity"):
+        return np.ones((coords_np.shape[0], 1), dtype=float)
+    x0, x1, _y0, y1 = benchmark.bounds
+    sigma = max(min(x1 - x0, y1 - _y0) / 8.0, 1e-8)
+    left = ((coords_np[:, 0:1] - x0) / sigma) ** 2 + ((coords_np[:, 1:2] - y1) / sigma) ** 2
+    right = ((coords_np[:, 0:1] - x1) / sigma) ** 2 + ((coords_np[:, 1:2] - y1) / sigma) ** 2
+    return np.maximum(np.exp(-left), np.exp(-right))
 
 
 def _cavity_profile_metrics(
@@ -233,6 +271,27 @@ def _boundary_error(
         ref = benchmark.exact_torch(coords)
         err = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
     return float(torch.mean(err).detach().cpu())
+
+
+def _corner_boundary_error(
+    model: torch.nn.Module,
+    benchmark: Any,
+    coords_np: np.ndarray,
+    device: torch.device,
+) -> float:
+    if not hasattr(benchmark, "boundary_mask_np"):
+        return float("nan")
+    mask = benchmark.boundary_mask_np(coords_np)
+    if not np.any(mask):
+        return float("nan")
+    coords_boundary = coords_np[mask]
+    weights = _lid_corner_weight(coords_boundary, benchmark)
+    coords = torch.tensor(coords_boundary, dtype=torch.float32, device=device)
+    with torch.no_grad():
+        pred = model(coords)
+        ref = benchmark.exact_torch(coords)
+        err = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
+    return _weighted_mean(err.detach().cpu().numpy(), weights)
 
 
 def _boundary_metrics(

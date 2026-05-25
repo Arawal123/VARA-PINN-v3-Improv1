@@ -46,6 +46,13 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "lid_driven_cavity": {
         "benchmark": "lid_driven_cavity",
+        "model": {
+            "type": "streamfunction",
+            "boundary_transform": True,
+            "enforce_lid_profile": False,
+            "corner_eps": 0.04,
+            "include_vorticity_transport_loss": True,
+        },
         "benchmark_params": {
             "reynolds": 100.0,
             "x_min": 0.0,
@@ -65,10 +72,20 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
                 "aggregate_pde_residual",
                 "centerline_pde_residual",
                 "centerline_continuity_residual",
+                "corner_pde_residual",
+                "corner_boundary_violation",
                 "boundary_violation",
             ],
         },
-        "training": {"n_data": 0},
+        "training": {
+            "adaptive_cycles": 6,
+            "epochs_per_cycle": 300,
+            "log_every": 75,
+            "n_collocation": 4096,
+            "n_boundary": 2048,
+            "n_data": 0,
+            "weights": {"omega_streamfunction": 0.1, "vorticity_transport": 0.02},
+        },
         "local_controller": {
             "objective_weights": {
                 "u": 0.0,
@@ -80,6 +97,10 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
                 "momentum": 0.75,
                 "boundary": 2.0,
                 "unweighted_validation": 0.75,
+                "centerline_residual": 1.0,
+                "centerline_continuity": 1.0,
+                "corner_residual": 0.25,
+                "corner_boundary": 0.5,
             },
             "continuity_collateral_tolerance": 0.05,
             "boundary_collateral_tolerance": 0.02,
@@ -253,6 +274,12 @@ def run_named_benchmark(
             run_config = deepcopy(config)
             run_config["seed"] = int(seed)
             mode = METHOD_TO_MODE[method]
+            if benchmark_name == "lid_driven_cavity" and str(run_config.get("model", {}).get("type", "")).lower() in {
+                "streamfunction",
+                "streamfunction_mlp",
+                "psi_p",
+            }:
+                mode = "cavity_streamfunction_vanilla" if method == "vanilla" else "cavity_streamfunction_vara"
             trainer = VARATrainer(run_config, mode=mode)
             metrics = trainer.run()
             metrics["benchmark"] = run_config["benchmark"]

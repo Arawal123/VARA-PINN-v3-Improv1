@@ -79,14 +79,15 @@ class VARATrainer(ExperimentTrainer):
         self.local_weight_records: list[dict[str, Any]] = []
 
     def run(self) -> dict[str, float]:
-        if self.mode in {"local_vara", "local_constrained_vara"}:
-            return self._run_local(constrained=self.mode == "local_constrained_vara")
+        if self.mode in {"local_vara", "local_constrained_vara", "cavity_streamfunction_vara"}:
+            return self._run_local(constrained=self.mode in {"local_constrained_vara", "cavity_streamfunction_vara"})
         if self.mode == "full_vara_constrained":
             return self._run_constrained()
 
         train_cfg = self.config.get("training", {})
         cycles = int(train_cfg.get("adaptive_cycles", 2))
         batch = self.initial_batch()
+        vanilla_mode = self.mode in {"vanilla_pinn", "cavity_streamfunction_vanilla"}
         adaptive_sampling = self.mode != "full_vara_no_sampling"
         local_weights_enabled = self.mode != "full_vara_no_local_weights"
 
@@ -102,7 +103,7 @@ class VARATrainer(ExperimentTrainer):
             self.weak_logger.log({"cycle": cycle, "weak_regions": weak_regions})
             save_patch_score_map(scores, names, self.figure_dir / f"patch_scores_cycle_{cycle:03d}.png")
 
-            if self.mode == "vanilla_pinn":
+            if vanilla_mode:
                 record = {"cycle": cycle, "stage": "disabled", "weak_regions": [], "actions": []}
             else:
                 record = self.controller.step(cycle, weak_regions, scores, names)
@@ -116,7 +117,7 @@ class VARATrainer(ExperimentTrainer):
                 coords,
                 weak_regions,
                 self.controller.state,
-                adaptive=adaptive_sampling and self.mode != "vanilla_pinn",
+                adaptive=adaptive_sampling and not vanilla_mode,
             )
         metrics = self.evaluate_and_save_final()
         metrics["J_score"] = self._j_score(metrics)

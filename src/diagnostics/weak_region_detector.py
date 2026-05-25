@@ -105,6 +105,8 @@ def _failure_type(name: str, confidence: float) -> str:
         root = "vorticity"
     elif "u_error" in name or "v_error" in name or "speed" in name:
         root = "velocity"
+    elif "corner" in name:
+        root = "corner"
     elif "centerline" in name:
         root = "centerline_residual"
     elif "continuity" in name:

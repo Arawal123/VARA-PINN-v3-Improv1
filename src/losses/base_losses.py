@@ -7,7 +7,8 @@ from typing import Any
 import torch
 
 from src.physics.kovasznay import center_pressure
-from src.physics.navier_stokes import navier_stokes_residuals
+from src.physics.navier_stokes import gradients, navier_stokes_residuals
+from src.physics.vorticity import vorticity_transport_residual
 
 
 def mse(x: torch.Tensor) -> torch.Tensor:
@@ -36,6 +37,14 @@ def compute_pointwise_losses(
         "continuity": residuals["f_c"].pow(2),
         "pde": residuals["f_u"].pow(2) + residuals["f_v"].pow(2) + residuals["f_c"].pow(2),
     }
+    if hasattr(model, "psi_pressure"):
+        psi, _ = model.psi_pressure(residuals["coords"])
+        grad_psi = gradients(psi, residuals["coords"])
+        psi_xx = gradients(grad_psi[:, 0:1], residuals["coords"])[:, 0:1]
+        psi_yy = gradients(grad_psi[:, 1:2], residuals["coords"])[:, 1:2]
+        pointwise["omega_streamfunction"] = (residuals["omega"] + psi_xx + psi_yy).pow(2)
+    if bool(getattr(model, "include_vorticity_transport_loss", False)):
+        pointwise["vorticity_transport"] = vorticity_transport_residual(model, xy_f, benchmark.nu, steady=steady).pow(2)
 
     bc_pred = model(xy_bc)
     bc_ref = benchmark.exact_torch(xy_bc)
