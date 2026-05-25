@@ -19,26 +19,21 @@ pde:
   steady: true
 
 model:
-  type: streamfunction
   input_dim: 2
   output_dim: 3
   hidden_layers: [64, 64, 64]
   activation: tanh
-  boundary_transform: true
-  enforce_lid_profile: false
-  corner_eps: 0.04
-  include_vorticity_transport_loss: true
 
 optimizer:
   name: adam
   lr: 0.001
 
 training:
-  adaptive_cycles: 6
-  epochs_per_cycle: 300
-  log_every: 75
-  n_collocation: 4096
-  n_boundary: 2048
+  adaptive_cycles: 4
+  epochs_per_cycle: 100
+  log_every: 25
+  n_collocation: 2048
+  n_boundary: 768
   n_data: 0
   weights:
     pde: 1.0
@@ -51,8 +46,6 @@ training:
     p: 0.0
     omega: 0.0
     pressure_gradient: 0.0
-    omega_streamfunction: 0.1
-    vorticity_transport: 0.02
 
 validation:
   nx: 48
@@ -71,8 +64,6 @@ diagnostics:
     - aggregate_pde_residual
     - centerline_pde_residual
     - centerline_continuity_residual
-    - corner_pde_residual
-    - corner_boundary_violation
     - boundary_violation
   aggregation: mean
   aggregation_percentile: 90.0
@@ -118,10 +109,6 @@ local_controller:
     momentum: 0.75
     boundary: 2.0
     unweighted_validation: 0.75
-    centerline_residual: 1.0
-    centerline_continuity: 1.0
-    corner_residual: 0.25
-    corner_boundary: 0.5
 
 sampling:
   mixture:

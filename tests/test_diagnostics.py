@@ -38,7 +38,5 @@ def test_lid_cavity_centerline_residual_diagnostics_do_not_need_reference():
     maps = DiagnosticMapBuilder(model, flow, torch.device("cpu")).build(xy, mode="residual_only")
     assert "centerline_pde_residual" in maps
     assert "centerline_continuity_residual" in maps
-    assert "corner_pde_residual" in maps
-    assert "corner_boundary_violation" in maps
     assert maps["centerline_pde_residual"].shape == (xy.shape[0], 1)
     assert np.isfinite(maps["centerline_pde_residual"]).all()

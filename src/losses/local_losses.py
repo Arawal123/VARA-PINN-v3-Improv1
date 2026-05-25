@@ -21,7 +21,6 @@ LOSS_COORD_SOURCE = {
     "pde": "xy_f",
     "pressure_poisson": "xy_f",
     "vorticity_transport": "xy_f",
-    "omega_streamfunction": "xy_f",
     "bc": "xy_bc",
 }
 
