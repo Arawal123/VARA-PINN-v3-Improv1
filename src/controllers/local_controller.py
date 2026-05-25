@@ -22,9 +22,6 @@ METRIC_BY_DIAGNOSTIC = {
     "aggregate_pde_residual": "pde_residual_mean",
     "pde_residual": "pde_residual_mean",
     "boundary_violation": "boundary_condition_error",
-    "u_profile_error": "u_centerline_rmse",
-    "v_profile_error": "v_centerline_rmse",
-    "profile_error": "centerline_profile_score",
 }
 
 
@@ -88,9 +85,6 @@ class LocalControllerConfig:
             "momentum_v": self.local_pde_weight_max,
             "continuity": self.local_pde_weight_max,
             "bc": self.local_bc_weight_max,
-            "u_profile": self.local_velocity_weight_max,
-            "v_profile": self.local_velocity_weight_max,
-            "profile": self.local_velocity_weight_max,
         }
 
 
@@ -186,8 +180,6 @@ class LocalVARAController:
             + float(weights.get("momentum", 0.0)) * self._metric(metrics, "momentum_residual_mean")
             + float(weights.get("boundary", 0.0)) * self._metric(metrics, "boundary_condition_error")
             + float(weights.get("unweighted_validation", 0.0)) * self._metric(metrics, "unweighted_validation_loss")
-            + float(weights.get("profile", 0.0)) * self._metric(metrics, "centerline_profile_score")
-            + float(weights.get("cavity", 0.0)) * self._metric(metrics, "cavity_benchmark_score")
         )
 
     def evaluate_acceptance(
@@ -287,12 +279,6 @@ class LocalVARAController:
             return "increase_local_momentum", ["momentum_u", "pde"]
         if "momentum_v" in variable:
             return "increase_local_momentum", ["momentum_v", "pde"]
-        if "u_profile" in variable:
-            return "increase_local_cavity_profile", ["u_profile"]
-        if "v_profile" in variable:
-            return "increase_local_cavity_profile", ["v_profile"]
-        if "profile" in variable:
-            return "increase_local_cavity_profile", ["profile"]
         if "boundary" in variable:
             return "increase_local_boundary", ["bc"]
         return "increase_local_pde", ["pde"]
@@ -336,10 +322,6 @@ class LocalVARAController:
             "momentum_residual_mean",
             "boundary_condition_error",
             "unweighted_validation_loss",
-            "u_centerline_rmse",
-            "v_centerline_rmse",
-            "centerline_profile_score",
-            "cavity_benchmark_score",
         ]:
             before = self._metric(before_metrics, metric_name)
             after = self._metric(after_metrics, metric_name)

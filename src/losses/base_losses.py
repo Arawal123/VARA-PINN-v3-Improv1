@@ -52,19 +52,6 @@ def compute_pointwise_losses(
         pointwise["omega"] = (omega_pred - targets["omega"]).pow(2)
         p_grad = navier_stokes_residuals(model, xy_data, nu=benchmark.nu, steady=steady)
         pointwise["pressure_gradient"] = (p_grad["p_x"] - targets["p_x"]).pow(2) + (p_grad["p_y"] - targets["p_y"]).pow(2)
-    xy_profile_u = batch.get("xy_profile_u")
-    target_profile_u = batch.get("target_profile_u")
-    if xy_profile_u is not None and target_profile_u is not None and xy_profile_u.shape[0] > 0:
-        pred_profile_u = model(xy_profile_u)[:, 0:1]
-        pointwise["u_profile"] = (pred_profile_u - target_profile_u).pow(2)
-    xy_profile_v = batch.get("xy_profile_v")
-    target_profile_v = batch.get("target_profile_v")
-    if xy_profile_v is not None and target_profile_v is not None and xy_profile_v.shape[0] > 0:
-        pred_profile_v = model(xy_profile_v)[:, 1:2]
-        pointwise["v_profile"] = (pred_profile_v - target_profile_v).pow(2)
-    profile_terms = [pointwise[name] for name in ["u_profile", "v_profile"] if name in pointwise]
-    if profile_terms:
-        pointwise["profile"] = torch.cat(profile_terms, dim=0)
     return pointwise
 
 

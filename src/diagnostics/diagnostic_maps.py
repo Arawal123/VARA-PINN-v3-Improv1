@@ -101,35 +101,7 @@ class DiagnosticMapBuilder:
 
         maps["aggregate_pde_residual"] = maps["pde_residual"]
         maps["boundary_violation"] = self._boundary_violation(coords_np, boundary_coords_np)
-        maps.update(self._profile_errors(coords_np, u_pred, v_pred))
         return maps
-
-    def _profile_errors(self, coords_np: np.ndarray, u_pred: np.ndarray, v_pred: np.ndarray) -> dict[str, np.ndarray]:
-        zeros = np.zeros((coords_np.shape[0], 1), dtype=float)
-        out = {"u_profile_error": zeros.copy(), "v_profile_error": zeros.copy(), "profile_error": zeros.copy()}
-        if not bool(getattr(self.benchmark, "has_profile_reference", False)):
-            return out
-        profile = self.benchmark.profile_reference_np()
-        if "u_xy" in profile and "u_ref" in profile:
-            xy_ref = np.asarray(profile["u_xy"], dtype=float)
-            values = np.asarray(profile["u_ref"], dtype=float).reshape(-1)
-            order = np.argsort(xy_ref[:, 1])
-            interp = np.interp(coords_np[:, 1], xy_ref[order, 1], values[order])
-            center = float(np.mean(xy_ref[:, 0]))
-            sigma = max((self.benchmark.bounds[1] - self.benchmark.bounds[0]) / 8.0, 1e-6)
-            weight = np.exp(-((coords_np[:, 0] - center) / sigma) ** 2)
-            out["u_profile_error"][:, 0] = np.abs(u_pred[:, 0] - interp) * weight
-        if "v_xy" in profile and "v_ref" in profile:
-            xy_ref = np.asarray(profile["v_xy"], dtype=float)
-            values = np.asarray(profile["v_ref"], dtype=float).reshape(-1)
-            order = np.argsort(xy_ref[:, 0])
-            interp = np.interp(coords_np[:, 0], xy_ref[order, 0], values[order])
-            center = float(np.mean(xy_ref[:, 1]))
-            sigma = max((self.benchmark.bounds[3] - self.benchmark.bounds[2]) / 8.0, 1e-6)
-            weight = np.exp(-((coords_np[:, 1] - center) / sigma) ** 2)
-            out["v_profile_error"][:, 0] = np.abs(v_pred[:, 0] - interp) * weight
-        out["profile_error"] = out["u_profile_error"] + out["v_profile_error"]
-        return out
 
     def _boundary_violation(self, coords_np: np.ndarray, boundary_coords_np: np.ndarray | None) -> np.ndarray:
         x0, x1, y0, y1 = self.benchmark.bounds
