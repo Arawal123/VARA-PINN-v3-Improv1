@@ -21,8 +21,10 @@ METRIC_BY_DIAGNOSTIC = {
     "momentum_v_residual": "momentum_residual_mean",
     "aggregate_pde_residual": "pde_residual_mean",
     "pde_residual": "pde_residual_mean",
-    "centerline_pde_residual": "pde_residual_mean",
-    "centerline_continuity_residual": "continuity_residual_mean",
+    "centerline_pde_residual": "centerline_pde_residual_mean",
+    "centerline_continuity_residual": "centerline_continuity_residual_mean",
+    "corner_pde_residual": "corner_pde_residual_mean",
+    "corner_boundary_error": "corner_boundary_error",
     "boundary_violation": "boundary_condition_error",
 }
 
@@ -49,6 +51,17 @@ class LocalControllerConfig:
     continuity_collateral_tolerance: float = 0.05
     boundary_collateral_tolerance: float = 0.05
     validation_loss_tolerance: float = 0.02
+    pde_hard_tolerance: float = 1.0
+    boundary_hard_tolerance: float = 1.0
+    validation_loss_hard_tolerance: float = 1.0
+    centerline_pde_hard_tolerance: float = 1.0
+    corner_boundary_hard_tolerance: float = 1.0
+    u_boundary_hard_tolerance: float = 1.0
+    v_boundary_hard_tolerance: float = 1.0
+    wall_patch_strength_factor: float = 1.0
+    corner_patch_strength_factor: float = 1.0
+    boundary_patch_margin: float = 1e-9
+    rejection_recovery_epochs: int = 0
     warmup_cycles: int = 0
 
     @classmethod
@@ -73,6 +86,17 @@ class LocalControllerConfig:
             continuity_collateral_tolerance=float(data.get("continuity_collateral_tolerance", 0.05)),
             boundary_collateral_tolerance=float(data.get("boundary_collateral_tolerance", 0.05)),
             validation_loss_tolerance=float(data.get("validation_loss_tolerance", 0.02)),
+            pde_hard_tolerance=float(data.get("pde_hard_tolerance", 1.0)),
+            boundary_hard_tolerance=float(data.get("boundary_hard_tolerance", 1.0)),
+            validation_loss_hard_tolerance=float(data.get("validation_loss_hard_tolerance", 1.0)),
+            centerline_pde_hard_tolerance=float(data.get("centerline_pde_hard_tolerance", 1.0)),
+            corner_boundary_hard_tolerance=float(data.get("corner_boundary_hard_tolerance", 1.0)),
+            u_boundary_hard_tolerance=float(data.get("u_boundary_hard_tolerance", 1.0)),
+            v_boundary_hard_tolerance=float(data.get("v_boundary_hard_tolerance", 1.0)),
+            wall_patch_strength_factor=float(data.get("wall_patch_strength_factor", 1.0)),
+            corner_patch_strength_factor=float(data.get("corner_patch_strength_factor", 1.0)),
+            boundary_patch_margin=float(data.get("boundary_patch_margin", 1e-9)),
+            rejection_recovery_epochs=int(data.get("rejection_recovery_epochs", 0)),
             warmup_cycles=int(data.get("warmup_cycles", 0)),
         )
 
@@ -148,6 +172,7 @@ class LocalVARAController:
                 continue
             seen.add(key)
             strength = self._strength(region.variable, int(region.patch_id), float(region.confidence))
+            strength *= self._geometry_strength_factor(region.bounds)
             interventions.append(
                 LocalIntervention(
                     variable=region.variable,
@@ -184,6 +209,12 @@ class LocalVARAController:
             + float(weights.get("momentum", 0.0)) * self._metric(metrics, "momentum_residual_mean")
             + float(weights.get("boundary", 0.0)) * self._metric(metrics, "boundary_condition_error")
             + float(weights.get("unweighted_validation", 0.0)) * self._metric(metrics, "unweighted_validation_loss")
+            + float(weights.get("centerline_pde", 0.0)) * self._metric(metrics, "centerline_pde_residual_mean")
+            + float(weights.get("centerline_continuity", 0.0)) * self._metric(metrics, "centerline_continuity_residual_mean")
+            + float(weights.get("corner_pde", 0.0)) * self._metric(metrics, "corner_pde_residual_mean")
+            + float(weights.get("corner_boundary", 0.0)) * self._metric(metrics, "corner_boundary_error")
+            + float(weights.get("u_boundary", 0.0)) * self._metric(metrics, "u_boundary_rmse")
+            + float(weights.get("v_boundary", 0.0)) * self._metric(metrics, "v_boundary_rmse")
         )
 
     def evaluate_acceptance(
@@ -215,6 +246,13 @@ class LocalVARAController:
             and metrics["continuity_collateral_damage"] <= self.config.continuity_collateral_tolerance
             and metrics["boundary_collateral_damage"] <= self.config.boundary_collateral_tolerance
             and metrics["validation_loss_damage"] <= self.config.validation_loss_tolerance
+            and metrics["pde_hard_damage"] <= self.config.pde_hard_tolerance
+            and metrics["boundary_hard_damage"] <= self.config.boundary_hard_tolerance
+            and metrics["validation_loss_hard_damage"] <= self.config.validation_loss_hard_tolerance
+            and metrics["centerline_pde_hard_damage"] <= self.config.centerline_pde_hard_tolerance
+            and metrics["corner_boundary_hard_damage"] <= self.config.corner_boundary_hard_tolerance
+            and metrics["u_boundary_hard_damage"] <= self.config.u_boundary_hard_tolerance
+            and metrics["v_boundary_hard_damage"] <= self.config.v_boundary_hard_tolerance
         )
         return accepted, metrics
 
@@ -277,12 +315,16 @@ class LocalVARAController:
             return "increase_local_pressure", ["p", "pressure_gradient"]
         if "omega" in variable or "vorticity" in variable:
             return "increase_local_vorticity", ["omega", "pde"]
-        if "continuity" in variable:
-            return "increase_local_divergence", ["continuity", "pde"]
         if "centerline_continuity" in variable:
             return "increase_local_divergence", ["continuity", "pde"]
         if "centerline_pde" in variable:
             return "increase_local_pde", ["pde"]
+        if "corner_pde" in variable:
+            return "increase_local_pde", ["pde"]
+        if "corner_boundary" in variable:
+            return "increase_local_boundary", ["bc"]
+        if "continuity" in variable:
+            return "increase_local_divergence", ["continuity", "pde"]
         if "momentum_u" in variable:
             return "increase_local_momentum", ["momentum_u", "pde"]
         if "momentum_v" in variable:
@@ -329,6 +371,13 @@ class LocalVARAController:
             "continuity_residual_mean",
             "momentum_residual_mean",
             "boundary_condition_error",
+            "u_boundary_rmse",
+            "v_boundary_rmse",
+            "boundary_speed_rmse",
+            "centerline_pde_residual_mean",
+            "centerline_continuity_residual_mean",
+            "corner_pde_residual_mean",
+            "corner_boundary_error",
             "unweighted_validation_loss",
         ]:
             before = self._metric(before_metrics, metric_name)
@@ -338,6 +387,15 @@ class LocalVARAController:
             collateral[metric_name] = max(0.0, (after - before) / (abs(before) + 1e-12))
         pressure_before = self._metric(before_metrics, "p_rel_l2_centered")
         pressure_after = self._metric(after_metrics, "p_rel_l2_centered")
+        hard_damages = {
+            "pde": self._relative_damage(before_metrics, after_metrics, "pde_residual_mean"),
+            "boundary": self._relative_damage(before_metrics, after_metrics, "boundary_condition_error"),
+            "validation_loss": self._relative_damage(before_metrics, after_metrics, "unweighted_validation_loss"),
+            "centerline_pde": self._relative_damage(before_metrics, after_metrics, "centerline_pde_residual_mean"),
+            "corner_boundary": self._relative_damage(before_metrics, after_metrics, "corner_boundary_error"),
+            "u_boundary": self._relative_damage(before_metrics, after_metrics, "u_boundary_rmse"),
+            "v_boundary": self._relative_damage(before_metrics, after_metrics, "v_boundary_rmse"),
+        }
         return {
             "target_local_improvement": float(target_improvement),
             "J_before": self.objective(before_metrics),
@@ -347,7 +405,39 @@ class LocalVARAController:
             "continuity_collateral_damage": collateral.get("continuity_residual_mean", 0.0),
             "boundary_collateral_damage": collateral.get("boundary_condition_error", 0.0),
             "validation_loss_damage": collateral.get("unweighted_validation_loss", 0.0),
+            "pde_hard_damage": hard_damages["pde"],
+            "boundary_hard_damage": hard_damages["boundary"],
+            "validation_loss_hard_damage": hard_damages["validation_loss"],
+            "centerline_pde_hard_damage": hard_damages["centerline_pde"],
+            "corner_boundary_hard_damage": hard_damages["corner_boundary"],
+            "u_boundary_hard_damage": hard_damages["u_boundary"],
+            "v_boundary_hard_damage": hard_damages["v_boundary"],
         }
+
+    def _relative_damage(self, before_metrics: dict[str, float], after_metrics: dict[str, float], name: str) -> float:
+        before = self._metric(before_metrics, name)
+        after = self._metric(after_metrics, name)
+        if before == 0.0 and after == 0.0:
+            return 0.0
+        return float(max(0.0, (after - before) / (abs(before) + 1e-12)))
+
+    def _geometry_strength_factor(self, bounds: tuple[float, float, float, float, float | None, float | None]) -> float:
+        if not bounds:
+            return 1.0
+        x0, x1, y0, y1 = (float(bounds[i]) for i in range(4))
+        margin = float(self.config.boundary_patch_margin)
+        touches_left = x0 <= margin
+        touches_right = x1 >= 1.0 - margin
+        touches_bottom = y0 <= margin
+        touches_top = y1 >= 1.0 - margin
+        touches_wall = touches_left or touches_right or touches_bottom or touches_top
+        touches_corner = (touches_left or touches_right) and (touches_bottom or touches_top)
+        factor = 1.0
+        if touches_wall:
+            factor *= float(self.config.wall_patch_strength_factor)
+        if touches_corner:
+            factor *= float(self.config.corner_patch_strength_factor)
+        return max(1e-4, float(factor))
 
     def _metric(self, metrics: dict[str, float], name: str) -> float:
         try:

@@ -105,6 +105,9 @@ class DiagnosticMapBuilder:
             centerline_weight = self._centerline_weight(coords_np)
             maps["centerline_pde_residual"] = maps["pde_residual"] * centerline_weight
             maps["centerline_continuity_residual"] = maps["continuity_residual"] * centerline_weight
+            corner_weight = self._corner_weight(coords_np)
+            maps["corner_pde_residual"] = maps["pde_residual"] * corner_weight
+            maps["corner_boundary_error"] = maps["boundary_violation"] * corner_weight
         return maps
 
     def _is_lid_driven_cavity(self) -> bool:
@@ -119,6 +122,17 @@ class DiagnosticMapBuilder:
         wx = np.exp(-((coords_np[:, 0:1] - x_mid) / sigma_x) ** 2)
         wy = np.exp(-((coords_np[:, 1:2] - y_mid) / sigma_y) ** 2)
         return np.maximum(wx, wy)
+
+    def _corner_weight(self, coords_np: np.ndarray) -> np.ndarray:
+        x0, x1, y0, y1 = self.benchmark.bounds
+        width = max(float(x1 - x0), 1e-12)
+        height = max(float(y1 - y0), 1e-12)
+        corner_width = 0.12 * min(width, height)
+        left = coords_np[:, 0:1] <= x0 + corner_width
+        right = coords_np[:, 0:1] >= x1 - corner_width
+        bottom = coords_np[:, 1:2] <= y0 + corner_width
+        top = coords_np[:, 1:2] >= y1 - corner_width
+        return ((left | right) & (bottom | top)).astype(float)
 
     def _boundary_violation(self, coords_np: np.ndarray, boundary_coords_np: np.ndarray | None) -> np.ndarray:
         x0, x1, y0, y1 = self.benchmark.bounds

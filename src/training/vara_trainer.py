@@ -232,15 +232,17 @@ class VARATrainer(ExperimentTrainer):
         trial_epochs = self.local_controller.config.trial_epochs if constrained else 0
         warmup_cycles = max(0, int(self.local_controller.config.warmup_cycles))
         main_epochs = max(1, epochs_per_cycle - trial_epochs)
+        rejection_recovery_epochs = max(0, int(self.local_controller.config.rejection_recovery_epochs))
         batch = self.initial_batch()
         save_patch_grid_overlay(self.patch_grid, self.local_figure_dir / "patch_grid.png")
 
         for cycle in range(cycles):
+            cycle_main_epochs = epochs_per_cycle if cycle < warmup_cycles else main_epochs
             self.train_epochs(
                 batch,
                 self.local_controller.state,
                 cycle=cycle,
-                epochs_override=main_epochs,
+                epochs_override=cycle_main_epochs,
                 log_prefix="local_main",
             )
             maps_before, norm_before, raw_before, names, weak_regions, X, Y, coords = self._diagnose_local(update_ema=True)
@@ -351,9 +353,21 @@ class VARATrainer(ExperimentTrainer):
                         self.optimizer.load_state_dict(optimizer_snapshot)
                         self.local_controller.rollback(controller_snapshot)
                         self.local_controller.mark_rejected(intervention, decision_metrics)
+                        if rejection_recovery_epochs > 0:
+                            self.train_epochs(
+                                batch,
+                                self.local_controller.state,
+                                cycle=cycle,
+                                epochs_override=rejection_recovery_epochs,
+                                log_prefix=f"local_recovery_{candidate_id}",
+                            )
+                            _, _, _, _, _, _, _, coords_recovered = self._diagnose_local(update_ema=False, detect=False)
+                            recovered_metrics = self._validation_metrics(coords_recovered)
+                            kept_metrics = recovered_metrics
                         self.rejected_interventions += 1
                         self.rollback_count += 1
-                        kept_metrics = metrics_candidate_before
+                        if rejection_recovery_epochs == 0:
+                            kept_metrics = metrics_candidate_before
 
                     strength_after = self._pair_strength(intervention.variable, intervention.patch_id)
                     decision = self._build_local_decision(
@@ -384,6 +398,16 @@ class VARATrainer(ExperimentTrainer):
                         {"cycle": cycle, "mode": self.mode, "candidate_id": candidate_id, "actions": [action_record], "decision": decision}
                     )
                     self.local_decision_logger.log(self._flat_local_decision(decision))
+                if not interventions and trial_epochs > 0:
+                    self.train_epochs(
+                        batch,
+                        self.local_controller.state,
+                        cycle=cycle,
+                        epochs_override=trial_epochs,
+                        log_prefix="local_no_action_remainder",
+                    )
+                    _, _, _, _, _, _, _, coords_remainder = self._diagnose_local(update_ema=False, detect=False)
+                    kept_metrics = self._validation_metrics(coords_remainder)
             else:
                 controller_snapshot = self.local_controller.snapshot()
                 old_local_weights = deepcopy(controller_snapshot["local_weights"])
@@ -574,6 +598,18 @@ class VARATrainer(ExperimentTrainer):
             "momentum_residual_mean_after": metrics_after.get("momentum_residual_mean"),
             "boundary_condition_error_before": metrics_before.get("boundary_condition_error"),
             "boundary_condition_error_after": metrics_after.get("boundary_condition_error"),
+            "u_boundary_rmse_before": metrics_before.get("u_boundary_rmse"),
+            "u_boundary_rmse_after": metrics_after.get("u_boundary_rmse"),
+            "v_boundary_rmse_before": metrics_before.get("v_boundary_rmse"),
+            "v_boundary_rmse_after": metrics_after.get("v_boundary_rmse"),
+            "centerline_pde_residual_mean_before": metrics_before.get("centerline_pde_residual_mean"),
+            "centerline_pde_residual_mean_after": metrics_after.get("centerline_pde_residual_mean"),
+            "centerline_continuity_residual_mean_before": metrics_before.get("centerline_continuity_residual_mean"),
+            "centerline_continuity_residual_mean_after": metrics_after.get("centerline_continuity_residual_mean"),
+            "corner_pde_residual_mean_before": metrics_before.get("corner_pde_residual_mean"),
+            "corner_pde_residual_mean_after": metrics_after.get("corner_pde_residual_mean"),
+            "corner_boundary_error_before": metrics_before.get("corner_boundary_error"),
+            "corner_boundary_error_after": metrics_after.get("corner_boundary_error"),
             "unweighted_validation_loss_before": metrics_before.get("unweighted_validation_loss"),
             "unweighted_validation_loss_after": metrics_after.get("unweighted_validation_loss"),
             **decision_metrics,
@@ -637,6 +673,18 @@ class VARATrainer(ExperimentTrainer):
             "momentum_residual_mean_after": decision.get("momentum_residual_mean_after"),
             "boundary_condition_error_before": decision.get("boundary_condition_error_before"),
             "boundary_condition_error_after": decision.get("boundary_condition_error_after"),
+            "u_boundary_rmse_before": decision.get("u_boundary_rmse_before"),
+            "u_boundary_rmse_after": decision.get("u_boundary_rmse_after"),
+            "v_boundary_rmse_before": decision.get("v_boundary_rmse_before"),
+            "v_boundary_rmse_after": decision.get("v_boundary_rmse_after"),
+            "centerline_pde_residual_mean_before": decision.get("centerline_pde_residual_mean_before"),
+            "centerline_pde_residual_mean_after": decision.get("centerline_pde_residual_mean_after"),
+            "centerline_continuity_residual_mean_before": decision.get("centerline_continuity_residual_mean_before"),
+            "centerline_continuity_residual_mean_after": decision.get("centerline_continuity_residual_mean_after"),
+            "corner_pde_residual_mean_before": decision.get("corner_pde_residual_mean_before"),
+            "corner_pde_residual_mean_after": decision.get("corner_pde_residual_mean_after"),
+            "corner_boundary_error_before": decision.get("corner_boundary_error_before"),
+            "corner_boundary_error_after": decision.get("corner_boundary_error_after"),
             "unweighted_validation_loss_before": decision.get("unweighted_validation_loss_before"),
             "unweighted_validation_loss_after": decision.get("unweighted_validation_loss_after"),
             "J_before": decision["J_before"],
@@ -646,6 +694,13 @@ class VARATrainer(ExperimentTrainer):
             "continuity_collateral_damage": decision.get("continuity_collateral_damage"),
             "boundary_collateral_damage": decision.get("boundary_collateral_damage"),
             "validation_loss_damage": decision.get("validation_loss_damage"),
+            "pde_hard_damage": decision.get("pde_hard_damage"),
+            "boundary_hard_damage": decision.get("boundary_hard_damage"),
+            "validation_loss_hard_damage": decision.get("validation_loss_hard_damage"),
+            "centerline_pde_hard_damage": decision.get("centerline_pde_hard_damage"),
+            "corner_boundary_hard_damage": decision.get("corner_boundary_hard_damage"),
+            "u_boundary_hard_damage": decision.get("u_boundary_hard_damage"),
+            "v_boundary_hard_damage": decision.get("v_boundary_hard_damage"),
         }
 
     def _log_local_weights(self, cycle: int) -> None:
@@ -744,6 +799,20 @@ class VARATrainer(ExperimentTrainer):
             reasons.append("boundary_collateral_too_high")
         if float(decision_metrics.get("validation_loss_damage", 0.0)) > cfg.validation_loss_tolerance:
             reasons.append("validation_loss_too_high")
+        if float(decision_metrics.get("pde_hard_damage", 0.0)) > cfg.pde_hard_tolerance:
+            reasons.append("pde_hard_damage_too_high")
+        if float(decision_metrics.get("boundary_hard_damage", 0.0)) > cfg.boundary_hard_tolerance:
+            reasons.append("boundary_hard_damage_too_high")
+        if float(decision_metrics.get("validation_loss_hard_damage", 0.0)) > cfg.validation_loss_hard_tolerance:
+            reasons.append("validation_loss_hard_damage_too_high")
+        if float(decision_metrics.get("centerline_pde_hard_damage", 0.0)) > cfg.centerline_pde_hard_tolerance:
+            reasons.append("centerline_pde_hard_damage_too_high")
+        if float(decision_metrics.get("corner_boundary_hard_damage", 0.0)) > cfg.corner_boundary_hard_tolerance:
+            reasons.append("corner_boundary_hard_damage_too_high")
+        if float(decision_metrics.get("u_boundary_hard_damage", 0.0)) > cfg.u_boundary_hard_tolerance:
+            reasons.append("u_boundary_hard_damage_too_high")
+        if float(decision_metrics.get("v_boundary_hard_damage", 0.0)) > cfg.v_boundary_hard_tolerance:
+            reasons.append("v_boundary_hard_damage_too_high")
         return ",".join(reasons) if reasons else "constraint_failed"
 
     def _j_score(self, metrics: dict[str, float]) -> float:

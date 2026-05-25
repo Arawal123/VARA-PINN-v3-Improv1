@@ -107,6 +107,10 @@ def evaluate_on_grid(
         "u_boundary_rmse": boundary_metrics["u_boundary_rmse"],
         "v_boundary_rmse": boundary_metrics["v_boundary_rmse"],
         "boundary_speed_rmse": boundary_metrics["boundary_speed_rmse"],
+        "centerline_pde_residual_mean": float("nan"),
+        "centerline_continuity_residual_mean": float("nan"),
+        "corner_pde_residual_mean": float("nan"),
+        "corner_boundary_error": float("nan"),
         "u_centerline_rmse": float("nan"),
         "v_centerline_rmse": float("nan"),
         "u_centerline_rel_l2": float("nan"),
@@ -156,6 +160,17 @@ def evaluate_on_grid(
             }
         )
     metrics.update(_cavity_profile_metrics(model, benchmark, device))
+    if benchmark.__class__.__name__.lower().startswith("liddrivencavity"):
+        metrics.update(
+            _cavity_residual_geometry_metrics(
+                model=model,
+                benchmark=benchmark,
+                coords_np=coords_np,
+                device=device,
+                pde=pde,
+                continuity=np.abs(residuals["f_c"].detach().cpu().numpy()),
+            )
+        )
     metrics["unweighted_validation_loss"] = _finite_sum(
         [
             metrics["unweighted_pde_loss"],
@@ -174,6 +189,74 @@ def evaluate_on_grid(
             ]
         )
     return metrics
+
+
+def _cavity_residual_geometry_metrics(
+    model: torch.nn.Module,
+    benchmark: Any,
+    coords_np: np.ndarray,
+    device: torch.device,
+    pde: np.ndarray,
+    continuity: np.ndarray,
+) -> dict[str, float]:
+    x0, x1, y0, y1 = benchmark.bounds
+    width = max(float(x1 - x0), 1e-12)
+    height = max(float(y1 - y0), 1e-12)
+    x_mid = 0.5 * (x0 + x1)
+    y_mid = 0.5 * (y0 + y1)
+    sigma_x = max(width / 10.0, 1e-8)
+    sigma_y = max(height / 10.0, 1e-8)
+    wx = np.exp(-((coords_np[:, 0:1] - x_mid) / sigma_x) ** 2)
+    wy = np.exp(-((coords_np[:, 1:2] - y_mid) / sigma_y) ** 2)
+    centerline_weight = np.maximum(wx, wy)
+    corner_width = 0.12 * min(width, height)
+    left = coords_np[:, 0:1] <= x0 + corner_width
+    right = coords_np[:, 0:1] >= x1 - corner_width
+    bottom = coords_np[:, 1:2] <= y0 + corner_width
+    top = coords_np[:, 1:2] >= y1 - corner_width
+    corner_mask = (left | right) & (bottom | top)
+    boundary_mask = benchmark.boundary_mask_np(coords_np)[:, None] if hasattr(benchmark, "boundary_mask_np") else np.zeros_like(corner_mask)
+    corner_boundary_mask = corner_mask & boundary_mask
+    return {
+        "centerline_pde_residual_mean": _weighted_mean(pde, centerline_weight),
+        "centerline_continuity_residual_mean": _weighted_mean(continuity, centerline_weight),
+        "corner_pde_residual_mean": _masked_mean(pde, corner_mask),
+        "corner_boundary_error": _corner_boundary_error(model, benchmark, coords_np, corner_boundary_mask[:, 0], device),
+    }
+
+
+def _weighted_mean(values: np.ndarray, weights: np.ndarray) -> float:
+    values = np.asarray(values, dtype=float).reshape(-1, 1)
+    weights = np.asarray(weights, dtype=float).reshape(-1, 1)
+    denom = float(np.sum(weights))
+    if denom <= 1e-12:
+        return float("nan")
+    return float(np.sum(values * weights) / denom)
+
+
+def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float:
+    flat_mask = np.asarray(mask).reshape(-1).astype(bool)
+    if not np.any(flat_mask):
+        return float("nan")
+    flat_values = np.asarray(values, dtype=float).reshape(-1)
+    return float(np.mean(flat_values[flat_mask]))
+
+
+def _corner_boundary_error(
+    model: torch.nn.Module,
+    benchmark: Any,
+    coords_np: np.ndarray,
+    mask: np.ndarray,
+    device: torch.device,
+) -> float:
+    if not np.any(mask):
+        return float("nan")
+    coords = torch.tensor(coords_np[mask], dtype=torch.float32, device=device)
+    with torch.no_grad():
+        pred = model(coords)
+        ref = benchmark.exact_torch(coords)
+        err = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
+    return float(torch.mean(err).detach().cpu())
 
 
 def _cavity_profile_metrics(

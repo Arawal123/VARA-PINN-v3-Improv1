@@ -64,6 +64,8 @@ diagnostics:
     - aggregate_pde_residual
     - centerline_pde_residual
     - centerline_continuity_residual
+    - corner_pde_residual
+    - corner_boundary_error
     - boundary_violation
   aggregation: mean
   aggregation_percentile: 90.0
@@ -89,15 +91,26 @@ local_controller:
   collateral_tolerance: 0.10
   pressure_collateral_tolerance: 0.05
   continuity_collateral_tolerance: 0.05
-  boundary_collateral_tolerance: 0.02
-  validation_loss_tolerance: 0.015
+  boundary_collateral_tolerance: 0.005
+  validation_loss_tolerance: 0.010
+  pde_hard_tolerance: 0.005
+  boundary_hard_tolerance: 0.002
+  validation_loss_hard_tolerance: 0.005
+  centerline_pde_hard_tolerance: 0.025
+  corner_boundary_hard_tolerance: 0.005
+  u_boundary_hard_tolerance: 0.005
+  v_boundary_hard_tolerance: 0.005
   trial_epochs: 10
   max_actions_per_cycle: 3
-  initial_strength: 0.35
+  initial_strength: 0.30
   damping_factor: 0.5
-  warmup_cycles: 1
+  warmup_cycles: 2
   tiny_j_tolerance: 0.002
   strong_target_factor: 2.0
+  wall_patch_strength_factor: 0.70
+  corner_patch_strength_factor: 0.50
+  boundary_patch_margin: 1.0e-9
+  rejection_recovery_epochs: 10
   local_velocity_weight_max: 1.5
   local_pressure_weight_max: 1.5
   local_omega_weight_max: 1.5
@@ -107,8 +120,14 @@ local_controller:
     residual: 0.5
     continuity: 1.75
     momentum: 0.75
-    boundary: 2.0
+    boundary: 3.0
     unweighted_validation: 0.75
+    centerline_pde: 0.75
+    centerline_continuity: 0.50
+    corner_pde: 0.25
+    corner_boundary: 1.00
+    u_boundary: 0.50
+    v_boundary: 0.75
 
 sampling:
   mixture:

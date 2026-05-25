@@ -104,3 +104,78 @@ def test_local_acceptance_rejects_continuity_collateral_damage():
     )
     assert accepted is False
     assert decision["continuity_collateral_damage"] > 0.05
+
+
+def test_local_acceptance_rejects_boundary_hard_damage_even_for_boundary_target():
+    controller = LocalVARAController(
+        initial_weights={},
+        config=LocalControllerConfig.from_dict(
+            {
+                "min_improvement": 0.01,
+                "boundary_hard_tolerance": 0.001,
+                "objective_weights": {"residual": 1.0},
+            }
+        ),
+    )
+    intervention = LocalIntervention(
+        variable="boundary_violation",
+        patch_id=0,
+        action="increase_local_boundary",
+        loss_variables=["bc"],
+        strength=1.0,
+        severity=1.0,
+        confidence=1.0,
+        bounds=(0.0, 1.0, 0.0, 1.0, None, None),
+    )
+    before_scores = np.array([[1.0]])
+    after_scores = np.array([[0.8]])
+    before_metrics = {
+        "pde_residual_mean": 1.0,
+        "boundary_condition_error": 1.0,
+        "unweighted_validation_loss": 1.0,
+    }
+    after_metrics = {
+        "pde_residual_mean": 0.9,
+        "boundary_condition_error": 1.02,
+        "unweighted_validation_loss": 0.9,
+    }
+    accepted, decision = controller.evaluate_acceptance(
+        [intervention],
+        before_scores,
+        after_scores,
+        ["boundary_violation"],
+        before_metrics,
+        after_metrics,
+        constrained=True,
+    )
+    assert accepted is False
+    assert decision["boundary_hard_damage"] > 0.001
+
+
+def test_cavity_wall_and_corner_strength_scaling():
+    controller = LocalVARAController(
+        initial_weights={},
+        config=LocalControllerConfig.from_dict(
+            {
+                "initial_strength": 1.0,
+                "wall_patch_strength_factor": 0.5,
+                "corner_patch_strength_factor": 0.5,
+                "boundary_patch_margin": 1.0e-9,
+            }
+        ),
+    )
+    corner = LocalIntervention(
+        variable="corner_pde_residual",
+        patch_id=0,
+        action="increase_local_pde",
+        loss_variables=["pde"],
+        strength=1.0,
+        severity=1.0,
+        confidence=1.0,
+        bounds=(0.0, 0.25, 0.0, 0.25, None, None),
+    )
+    from src.diagnostics import WeakRegion
+
+    wr = WeakRegion(corner.patch_id, corner.variable, 1.0, 1.0, corner.bounds, "corner")
+    action = controller.propose([wr])[0]
+    assert action.strength == 0.25
