@@ -159,7 +159,29 @@ class ExperimentTrainer:
     def make_batch(self, xy_f: torch.Tensor, xy_bc: torch.Tensor, xy_data: torch.Tensor) -> dict[str, Any]:
         with torch.no_grad():
             targets = self.benchmark.exact_torch(xy_data)
-        return {"xy_f": xy_f, "xy_bc": xy_bc, "xy_data": xy_data, "targets_data": targets}
+        batch = {"xy_f": xy_f, "xy_bc": xy_bc, "xy_data": xy_data, "targets_data": targets}
+        batch.update(self._profile_batch())
+        return batch
+
+    def _profile_batch(self) -> dict[str, torch.Tensor]:
+        if not bool(getattr(self.benchmark, "has_profile_reference", False)):
+            return {}
+        profile = self.benchmark.profile_reference_np()
+        out: dict[str, torch.Tensor] = {}
+        coords_all = []
+        if "u_xy" in profile and "u_ref" in profile:
+            xy_u = torch.tensor(np.asarray(profile["u_xy"], dtype=float), dtype=torch.float32, device=self.device)
+            out["xy_profile_u"] = xy_u
+            out["target_profile_u"] = torch.tensor(np.asarray(profile["u_ref"], dtype=float), dtype=torch.float32, device=self.device)
+            coords_all.append(xy_u)
+        if "v_xy" in profile and "v_ref" in profile:
+            xy_v = torch.tensor(np.asarray(profile["v_xy"], dtype=float), dtype=torch.float32, device=self.device)
+            out["xy_profile_v"] = xy_v
+            out["target_profile_v"] = torch.tensor(np.asarray(profile["v_ref"], dtype=float), dtype=torch.float32, device=self.device)
+            coords_all.append(xy_v)
+        if coords_all:
+            out["xy_profile_all"] = torch.cat(coords_all, dim=0)
+        return out
 
     def validation_grid(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         cfg = self.config.get("validation", {})

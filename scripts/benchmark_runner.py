@@ -69,7 +69,8 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
                 "momentum": 0.75,
                 "boundary": 1.5,
                 "unweighted_validation": 0.5,
-                "profile": 2.0,
+                "profile": 3.0,
+                "cavity": 1.0,
             },
             "continuity_collateral_tolerance": 0.05,
             "boundary_collateral_tolerance": 0.05,
@@ -210,6 +211,20 @@ def run_named_benchmark(
                     "n_data": 0 if config["benchmark"] == "lid_driven_cavity" else 64,
                 },
                 "local_controller": {"trial_epochs": 2, "max_actions_per_cycle": 2},
+                "diagnostics": {
+                    "variables": [
+                        "continuity_residual",
+                        "momentum_u_residual",
+                        "momentum_v_residual",
+                        "aggregate_pde_residual",
+                        "boundary_violation",
+                        "u_profile_error",
+                        "v_profile_error",
+                        "profile_error",
+                    ]
+                    if config["benchmark"] == "lid_driven_cavity"
+                    else config.get("diagnostics", {}).get("variables")
+                },
                 "validation": {"nx": 16, "ny": 16},
                 "test": {"nx": 20, "ny": 20},
             },
