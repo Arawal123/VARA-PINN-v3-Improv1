@@ -30,6 +30,10 @@ METRICS = [
     "continuity_residual_mean",
     "momentum_residual_mean",
     "boundary_condition_error",
+    "unweighted_data_loss",
+    "unweighted_pde_loss",
+    "unweighted_bc_loss",
+    "unweighted_validation_loss",
     "final_total_loss",
     "J_score",
 ]
@@ -93,6 +97,9 @@ def collect_rows(results_dir: Path) -> list[dict]:
             "seed": int(data.get("seed", cfg.get("seed", -1))),
             "reference_kind": data.get("reference_kind", "unknown"),
             "has_reference": data.get("has_reference", None),
+            "run_type": data.get("run_type", cfg.get("run_type", "unknown")),
+            "reportable": bool(data.get("reportable", data.get("run_type", cfg.get("run_type", "")) != "smoke")),
+            "collapse_evaluated": bool(data.get("collapse_evaluated", data.get("run_type", cfg.get("run_type", "")) != "smoke")),
             "accepted_interventions": data.get("accepted_interventions", 0),
             "rejected_interventions": data.get("rejected_interventions", 0),
             "rollback_count": data.get("rollback_count", 0),
@@ -109,35 +116,66 @@ def collect_rows(results_dir: Path) -> list[dict]:
 
 def build_methodwise(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for (benchmark, method), group in df.groupby(["benchmark", "method"]):
-        row = {"benchmark": benchmark, "method": method, "n_runs": len(group)}
+    group_keys = ["benchmark", "run_type", "method"] if "run_type" in df.columns else ["benchmark", "method"]
+    for key, group in df.groupby(group_keys):
+        if len(group_keys) == 3:
+            benchmark, run_type, method = key
+            row = {"benchmark": benchmark, "run_type": run_type, "method": method, "n_runs": len(group)}
+        else:
+            benchmark, method = key
+            row = {"benchmark": benchmark, "method": method, "n_runs": len(group)}
         for metric in METRICS:
             values = pd.to_numeric(group[metric], errors="coerce")
             row[f"{metric}_mean"] = values.mean()
             row[f"{metric}_std"] = values.std()
         rows.append(row)
-    return pd.DataFrame(rows).sort_values(["benchmark", "method"])
+    sort_cols = ["benchmark", "run_type", "method"] if rows and "run_type" in rows[0] else ["benchmark", "method"]
+    return pd.DataFrame(rows).sort_values(sort_cols)
 
 
 def build_collapse(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for (benchmark, method), group in df.groupby(["benchmark", "method"]):
-        n = len(group)
-        c = int(group["collapsed"].sum())
-        rows.append({"benchmark": benchmark, "method": method, "collapse_rate_percent": 100.0 * c / n, "collapsed": c, "total": n})
-    return pd.DataFrame(rows).sort_values(["benchmark", "method"])
+    group_keys = ["benchmark", "run_type", "method"] if "run_type" in df.columns else ["benchmark", "method"]
+    for key, group in df.groupby(group_keys):
+        if len(group_keys) == 3:
+            benchmark, run_type, method = key
+        else:
+            benchmark, method = key
+            run_type = "unknown"
+        evaluated = group[group["collapse_evaluated"].astype(bool)] if "collapse_evaluated" in group else group
+        n = len(evaluated)
+        c = int(evaluated["collapsed"].sum()) if n else 0
+        rows.append(
+            {
+                "benchmark": benchmark,
+                "run_type": run_type,
+                "method": method,
+                "collapse_rate_percent": 100.0 * c / n if n else np.nan,
+                "collapsed": c,
+                "evaluated_runs": n,
+                "total_runs": len(group),
+                "smoke_or_not_evaluated_runs": len(group) - n,
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["benchmark", "run_type", "method"])
 
 
 def build_seedwise(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for (benchmark, seed), group in df.groupby(["benchmark", "seed"]):
+    group_keys = ["benchmark", "run_type", "seed"] if "run_type" in df.columns else ["benchmark", "seed"]
+    for key, group in df.groupby(group_keys):
+        if len(group_keys) == 3:
+            benchmark, run_type, seed = key
+        else:
+            benchmark, seed = key
+            run_type = "unknown"
         vanilla = group[group["method"] == "vanilla"]
         vara = group[group["method"] == "vara"]
         if vanilla.empty or vara.empty:
             continue
         v = vanilla.iloc[-1]
         a = vara.iloc[-1]
-        row = {"benchmark": benchmark, "seed": seed}
+        row = {"benchmark": benchmark, "run_type": run_type, "seed": seed}
         for metric in METRICS:
             v_val = pd.to_numeric(pd.Series([v[metric]]), errors="coerce").iloc[0]
             a_val = pd.to_numeric(pd.Series([a[metric]]), errors="coerce").iloc[0]
@@ -145,11 +183,20 @@ def build_seedwise(df: pd.DataFrame) -> pd.DataFrame:
             row[f"{metric}_vara"] = a_val
             row[f"{metric}_improvement_percent"] = (v_val - a_val) / v_val * 100.0 if pd.notna(v_val) and v_val != 0 and pd.notna(a_val) else np.nan
         rows.append(row)
-    return pd.DataFrame(rows).sort_values(["benchmark", "seed"]) if rows else pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(["benchmark", "run_type", "seed"]) if rows else pd.DataFrame()
 
 
 def save_bar_plots(methodwise: pd.DataFrame, fig_dir: Path) -> None:
-    for benchmark, group in methodwise.groupby("benchmark"):
+    group_keys = ["benchmark", "run_type"] if "run_type" in methodwise.columns else ["benchmark"]
+    for key, group in methodwise.groupby(group_keys):
+        if isinstance(key, tuple):
+            benchmark, run_type = key
+            stem_prefix = f"{benchmark}_{run_type}"
+            title_prefix = f"{benchmark} ({run_type})"
+        else:
+            benchmark = key
+            stem_prefix = benchmark
+            title_prefix = benchmark
         labels = []
         vanilla = []
         vara = []
@@ -159,6 +206,7 @@ def save_bar_plots(methodwise: pd.DataFrame, fig_dir: Path) -> None:
             "p_rmse_centered",
             "omega_rmse",
             "pde_residual_mean",
+            "unweighted_validation_loss",
             "boundary_condition_error",
         ]:
             v = group[group["method"] == "vanilla"]
@@ -174,27 +222,36 @@ def save_bar_plots(methodwise: pd.DataFrame, fig_dir: Path) -> None:
         fig, ax = plt.subplots(figsize=(12, 5), constrained_layout=True)
         ax.bar(x - 0.18, vanilla, 0.36, label="Vanilla")
         ax.bar(x + 0.18, vara, 0.36, label="VARA")
-        ax.set_title(f"{benchmark}: VARA vs Vanilla")
+        ax.set_title(f"{title_prefix}: VARA vs Vanilla")
         ax.set_ylabel("mean metric, lower is better")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=25, ha="right")
         ax.legend()
         ax.grid(axis="y", alpha=0.25)
-        fig.savefig(fig_dir / f"{benchmark}_vara_vs_vanilla_bar.png", dpi=220)
+        fig.savefig(fig_dir / f"{stem_prefix}_vara_vs_vanilla_bar.png", dpi=220)
         plt.close(fig)
 
 
 def save_seedwise_scatter(df: pd.DataFrame, fig_dir: Path) -> None:
-    for benchmark, group in df.groupby("benchmark"):
+    group_keys = ["benchmark", "run_type"] if "run_type" in df.columns else ["benchmark"]
+    for key, group in df.groupby(group_keys):
+        if isinstance(key, tuple):
+            benchmark, run_type = key
+            stem_prefix = f"{benchmark}_{run_type}"
+            title_prefix = f"{benchmark} ({run_type})"
+        else:
+            benchmark = key
+            stem_prefix = benchmark
+            title_prefix = benchmark
         fig, ax = plt.subplots(figsize=(7, 5), constrained_layout=True)
         for method, sub in group.groupby("method"):
             ax.scatter(sub["seed"], pd.to_numeric(sub["pde_residual_mean"], errors="coerce"), label=method)
-        ax.set_title(f"{benchmark}: seedwise PDE residual")
+        ax.set_title(f"{title_prefix}: seedwise PDE residual")
         ax.set_xlabel("seed")
         ax.set_ylabel("PDE residual mean")
         ax.legend()
         ax.grid(alpha=0.25)
-        fig.savefig(fig_dir / f"{benchmark}_seedwise_pde_residual.png", dpi=220)
+        fig.savefig(fig_dir / f"{stem_prefix}_seedwise_pde_residual.png", dpi=220)
         plt.close(fig)
 
 

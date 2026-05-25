@@ -268,6 +268,9 @@ class ExperimentTrainer:
         metrics["final_total_loss"] = float(self.last_losses.get("total", float("nan")))
         metrics["reference_kind"] = getattr(self.benchmark, "reference_kind", "analytical")
         metrics["has_reference"] = bool(getattr(self.benchmark, "has_reference", True))
+        metrics["run_type"] = str(self.config.get("run_type", "full"))
+        metrics["reportable"] = metrics["run_type"] != "smoke"
+        metrics["collapse_evaluated"] = bool(metrics["reportable"])
         metrics["collapsed"] = self._collapsed(metrics)
         self.metrics_logger.log({"cycle": "final_test", **metrics})
         save_json(metrics, self.run_dir / "summary.json")
@@ -337,6 +340,8 @@ class ExperimentTrainer:
             save_checkpoint(self.checkpoint_dir / "best.pt", self.model, self.optimizer, self.config, metrics, self.global_step, cycle)
 
     def _collapsed(self, metrics: dict[str, Any]) -> bool:
+        if not bool(metrics.get("collapse_evaluated", True)):
+            return False
         thresholds = self.config.get("collapse_thresholds", {})
         has_reference = bool(metrics.get("has_reference", True))
         relative_names = ["u_rel_l2", "v_rel_l2", "p_rel_l2_centered", "omega_rel_l2"]
@@ -364,7 +369,12 @@ class ExperimentTrainer:
                     return True
                 if numeric > float(thresholds.get(name, 5.0)):
                     return True
-        for name in ["pde_residual_mean", "continuity_residual_mean", "momentum_residual_mean", "final_total_loss"]:
+        for name in [
+            "pde_residual_mean",
+            "continuity_residual_mean",
+            "momentum_residual_mean",
+            "unweighted_validation_loss",
+        ]:
             value = metrics.get(name)
             if value is None:
                 continue

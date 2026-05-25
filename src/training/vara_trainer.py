@@ -523,6 +523,14 @@ class VARATrainer(ExperimentTrainer):
             "omega_rel_l2_after": metrics_after.get("omega_rel_l2"),
             "pde_residual_mean_before": metrics_before.get("pde_residual_mean"),
             "pde_residual_mean_after": metrics_after.get("pde_residual_mean"),
+            "continuity_residual_mean_before": metrics_before.get("continuity_residual_mean"),
+            "continuity_residual_mean_after": metrics_after.get("continuity_residual_mean"),
+            "momentum_residual_mean_before": metrics_before.get("momentum_residual_mean"),
+            "momentum_residual_mean_after": metrics_after.get("momentum_residual_mean"),
+            "boundary_condition_error_before": metrics_before.get("boundary_condition_error"),
+            "boundary_condition_error_after": metrics_after.get("boundary_condition_error"),
+            "unweighted_validation_loss_before": metrics_before.get("unweighted_validation_loss"),
+            "unweighted_validation_loss_after": metrics_after.get("unweighted_validation_loss"),
             **decision_metrics,
         }
 
@@ -577,10 +585,21 @@ class VARATrainer(ExperimentTrainer):
             "omega_rel_l2_after": decision["omega_rel_l2_after"],
             "pde_residual_mean_before": decision["pde_residual_mean_before"],
             "pde_residual_mean_after": decision["pde_residual_mean_after"],
+            "continuity_residual_mean_before": decision.get("continuity_residual_mean_before"),
+            "continuity_residual_mean_after": decision.get("continuity_residual_mean_after"),
+            "momentum_residual_mean_before": decision.get("momentum_residual_mean_before"),
+            "momentum_residual_mean_after": decision.get("momentum_residual_mean_after"),
+            "boundary_condition_error_before": decision.get("boundary_condition_error_before"),
+            "boundary_condition_error_after": decision.get("boundary_condition_error_after"),
+            "unweighted_validation_loss_before": decision.get("unweighted_validation_loss_before"),
+            "unweighted_validation_loss_after": decision.get("unweighted_validation_loss_after"),
             "J_before": decision["J_before"],
             "J_after": decision["J_after"],
             "max_collateral_damage": decision["max_collateral_damage"],
             "pressure_collateral_damage": decision["pressure_collateral_damage"],
+            "continuity_collateral_damage": decision.get("continuity_collateral_damage"),
+            "boundary_collateral_damage": decision.get("boundary_collateral_damage"),
+            "validation_loss_damage": decision.get("validation_loss_damage"),
         }
 
     def _log_local_weights(self, cycle: int) -> None:
@@ -673,6 +692,12 @@ class VARATrainer(ExperimentTrainer):
             reasons.append("collateral_too_high")
         if pressure_collateral > cfg.pressure_collateral_tolerance:
             reasons.append("pressure_collateral_too_high")
+        if float(decision_metrics.get("continuity_collateral_damage", 0.0)) > cfg.continuity_collateral_tolerance:
+            reasons.append("continuity_collateral_too_high")
+        if float(decision_metrics.get("boundary_collateral_damage", 0.0)) > cfg.boundary_collateral_tolerance:
+            reasons.append("boundary_collateral_too_high")
+        if float(decision_metrics.get("validation_loss_damage", 0.0)) > cfg.validation_loss_tolerance:
+            reasons.append("validation_loss_too_high")
         return ",".join(reasons) if reasons else "constraint_failed"
 
     def _j_score(self, metrics: dict[str, float]) -> float:

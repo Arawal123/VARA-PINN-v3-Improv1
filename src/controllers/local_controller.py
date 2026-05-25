@@ -16,12 +16,12 @@ METRIC_BY_DIAGNOSTIC = {
     "p_error_mean_centered": "p_rel_l2_centered",
     "pressure_gradient_error": "p_rel_l2_centered",
     "omega_error": "omega_rel_l2",
-    "continuity_residual": "pde_residual_mean",
-    "momentum_u_residual": "pde_residual_mean",
-    "momentum_v_residual": "pde_residual_mean",
+    "continuity_residual": "continuity_residual_mean",
+    "momentum_u_residual": "momentum_residual_mean",
+    "momentum_v_residual": "momentum_residual_mean",
     "aggregate_pde_residual": "pde_residual_mean",
     "pde_residual": "pde_residual_mean",
-    "boundary_violation": "pde_residual_mean",
+    "boundary_violation": "boundary_condition_error",
 }
 
 
@@ -44,6 +44,9 @@ class LocalControllerConfig:
     objective_weights: dict[str, float] | None = None
     tiny_j_tolerance: float = 0.002
     strong_target_factor: float = 2.0
+    continuity_collateral_tolerance: float = 0.05
+    boundary_collateral_tolerance: float = 0.05
+    validation_loss_tolerance: float = 0.02
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "LocalControllerConfig":
@@ -64,6 +67,9 @@ class LocalControllerConfig:
             objective_weights=dict(data.get("objective_weights", {"u": 1.0, "v": 1.0, "p": 1.5, "omega": 1.0, "residual": 0.25})),
             tiny_j_tolerance=float(data.get("tiny_j_tolerance", 0.002)),
             strong_target_factor=float(data.get("strong_target_factor", 2.0)),
+            continuity_collateral_tolerance=float(data.get("continuity_collateral_tolerance", 0.05)),
+            boundary_collateral_tolerance=float(data.get("boundary_collateral_tolerance", 0.05)),
+            validation_loss_tolerance=float(data.get("validation_loss_tolerance", 0.02)),
         )
 
     @property
@@ -164,16 +170,16 @@ class LocalVARAController:
 
     def objective(self, metrics: dict[str, float]) -> float:
         weights = self.config.objective_weights or {}
-        def metric(name: str) -> float:
-            value = float(metrics.get(name, 0.0))
-            return value if np.isfinite(value) else 0.0
-
         return float(
-            float(weights.get("u", 1.0)) * metric("u_rel_l2")
-            + float(weights.get("v", 1.0)) * metric("v_rel_l2")
-            + float(weights.get("p", 1.5)) * metric("p_rel_l2_centered")
-            + float(weights.get("omega", 1.0)) * metric("omega_rel_l2")
-            + float(weights.get("residual", 0.25)) * metric("pde_residual_mean")
+            float(weights.get("u", 1.0)) * self._metric_with_fallback(metrics, "u_rel_l2", "u_rmse")
+            + float(weights.get("v", 1.0)) * self._metric_with_fallback(metrics, "v_rel_l2", "v_rmse")
+            + float(weights.get("p", 1.5)) * self._metric_with_fallback(metrics, "p_rel_l2_centered", "p_rmse_centered")
+            + float(weights.get("omega", 1.0)) * self._metric_with_fallback(metrics, "omega_rel_l2", "omega_rmse")
+            + float(weights.get("residual", 0.25)) * self._metric(metrics, "pde_residual_mean")
+            + float(weights.get("continuity", 0.0)) * self._metric(metrics, "continuity_residual_mean")
+            + float(weights.get("momentum", 0.0)) * self._metric(metrics, "momentum_residual_mean")
+            + float(weights.get("boundary", 0.0)) * self._metric(metrics, "boundary_condition_error")
+            + float(weights.get("unweighted_validation", 0.0)) * self._metric(metrics, "unweighted_validation_loss")
         )
 
     def evaluate_acceptance(
@@ -202,6 +208,9 @@ class LocalVARAController:
             and (j_ok or tiny_j_ok)
             and metrics["max_collateral_damage"] <= self.config.collateral_tolerance
             and metrics["pressure_collateral_damage"] <= self.config.pressure_collateral_tolerance
+            and metrics["continuity_collateral_damage"] <= self.config.continuity_collateral_tolerance
+            and metrics["boundary_collateral_damage"] <= self.config.boundary_collateral_tolerance
+            and metrics["validation_loss_damage"] <= self.config.validation_loss_tolerance
         )
         return accepted, metrics
 
@@ -303,18 +312,44 @@ class LocalVARAController:
     ) -> dict[str, Any]:
         metric_targets = {METRIC_BY_DIAGNOSTIC.get(intervention.variable, "pde_residual_mean") for intervention in interventions}
         collateral = {}
-        for metric_name in ["u_rel_l2", "v_rel_l2", "p_rel_l2_centered", "omega_rel_l2", "pde_residual_mean"]:
-            before = float(before_metrics.get(metric_name, 0.0))
-            after = float(after_metrics.get(metric_name, 0.0))
+        for metric_name in [
+            "u_rel_l2",
+            "v_rel_l2",
+            "p_rel_l2_centered",
+            "omega_rel_l2",
+            "pde_residual_mean",
+            "continuity_residual_mean",
+            "momentum_residual_mean",
+            "boundary_condition_error",
+            "unweighted_validation_loss",
+        ]:
+            before = self._metric(before_metrics, metric_name)
+            after = self._metric(after_metrics, metric_name)
             if metric_name in metric_targets:
                 continue
             collateral[metric_name] = max(0.0, (after - before) / (abs(before) + 1e-12))
-        pressure_before = float(before_metrics.get("p_rel_l2_centered", 0.0))
-        pressure_after = float(after_metrics.get("p_rel_l2_centered", 0.0))
+        pressure_before = self._metric(before_metrics, "p_rel_l2_centered")
+        pressure_after = self._metric(after_metrics, "p_rel_l2_centered")
         return {
             "target_local_improvement": float(target_improvement),
             "J_before": self.objective(before_metrics),
             "J_after": self.objective(after_metrics),
             "max_collateral_damage": float(max(collateral.values()) if collateral else 0.0),
             "pressure_collateral_damage": float(max(0.0, (pressure_after - pressure_before) / (abs(pressure_before) + 1e-12))),
+            "continuity_collateral_damage": collateral.get("continuity_residual_mean", 0.0),
+            "boundary_collateral_damage": collateral.get("boundary_condition_error", 0.0),
+            "validation_loss_damage": collateral.get("unweighted_validation_loss", 0.0),
         }
+
+    def _metric(self, metrics: dict[str, float], name: str) -> float:
+        try:
+            value = float(metrics.get(name, 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        return value if np.isfinite(value) else 0.0
+
+    def _metric_with_fallback(self, metrics: dict[str, float], primary: str, fallback: str) -> float:
+        primary_value = self._metric(metrics, primary)
+        if primary_value != 0.0:
+            return primary_value
+        return self._metric(metrics, fallback)

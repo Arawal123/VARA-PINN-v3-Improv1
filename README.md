@@ -23,7 +23,7 @@ pip install -r requirements.txt
 python scripts/train_vara.py --config configs/kovasznay.yaml --mode full_vara
 ```
 
-The default config is intentionally small so the full path can be smoke-tested quickly. For paper runs, increase `epochs_per_cycle`, `adaptive_cycles`, model width/depth, point budgets, and seeds.
+Use `configs/kovasznay_debug.yaml` for smoke tests. The main `configs/kovasznay.yaml` is Colab-scale and intended for real Kovasznay training.
 
 ## Baselines and Ablations
 
@@ -63,7 +63,7 @@ Aggregate professor-readable tables and plots:
 python scripts/aggregate_benchmark_results.py --results_dir experiments/logs --output_dir experiments/benchmark_summary
 ```
 
-Aggregation writes `combined_results.csv`, `final_summary_table.csv`, `collapse_rate_table.csv`, `seedwise_comparison_table.csv`, `methodwise_mean_std_table.csv`, and comparison plots under `experiments/benchmark_summary/figures/`.
+Aggregation writes `combined_results.csv`, `final_summary_table.csv`, `collapse_rate_table.csv`, `seedwise_comparison_table.csv`, `methodwise_mean_std_table.csv`, and comparison plots under `experiments/benchmark_summary/figures/`. Runs launched with `--quick` are tagged as `run_type=smoke`; they are useful for checking plumbing, but collapse rates are not evaluated for smoke runs. Benchmark summaries include unweighted validation/data/PDE/BC losses so adaptive loss weights do not hide collateral damage.
 
 ## Outputs
 

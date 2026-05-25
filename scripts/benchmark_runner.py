@@ -27,27 +27,107 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
         "benchmark": "channel_inflow_outflow",
         "benchmark_params": {"reynolds": 40.0, "x_min": 0.0, "x_max": 2.0, "y_min": 0.0, "y_max": 1.0, "amplitude": 1.0},
         "diagnostics": {"mode": "full_reference"},
+        "local_controller": {
+            "objective_weights": {
+                "u": 1.0,
+                "v": 1.0,
+                "p": 1.0,
+                "omega": 0.5,
+                "residual": 0.25,
+                "continuity": 1.0,
+                "momentum": 0.5,
+                "boundary": 1.0,
+                "unweighted_validation": 0.25,
+            },
+            "continuity_collateral_tolerance": 0.05,
+            "boundary_collateral_tolerance": 0.05,
+            "validation_loss_tolerance": 0.02,
+        },
     },
     "lid_driven_cavity": {
         "benchmark": "lid_driven_cavity",
         "benchmark_params": {"reynolds": 100.0, "x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "lid_velocity": 1.0},
         "diagnostics": {"mode": "residual_only"},
         "training": {"n_data": 0},
+        "local_controller": {
+            "objective_weights": {
+                "u": 0.0,
+                "v": 0.0,
+                "p": 0.0,
+                "omega": 0.0,
+                "residual": 0.5,
+                "continuity": 1.5,
+                "momentum": 0.75,
+                "boundary": 1.5,
+                "unweighted_validation": 0.5,
+            },
+            "continuity_collateral_tolerance": 0.05,
+            "boundary_collateral_tolerance": 0.05,
+            "validation_loss_tolerance": 0.02,
+        },
     },
     "double_vortex_box": {
         "benchmark": "double_vortex_box",
         "benchmark_params": {"reynolds": 40.0, "x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "amplitude": 1.0},
         "diagnostics": {"mode": "full_reference"},
+        "local_controller": {
+            "objective_weights": {
+                "u": 1.0,
+                "v": 1.0,
+                "p": 0.5,
+                "omega": 1.0,
+                "residual": 0.25,
+                "continuity": 1.0,
+                "momentum": 0.5,
+                "boundary": 1.0,
+                "unweighted_validation": 0.25,
+            },
+            "continuity_collateral_tolerance": 0.05,
+            "boundary_collateral_tolerance": 0.05,
+            "validation_loss_tolerance": 0.02,
+        },
     },
     "boundary_condition_stress_test": {
         "benchmark": "boundary_condition_stress_test",
         "benchmark_params": {"reynolds": 40.0, "x_min": 0.0, "x_max": 1.0, "y_min": 0.0, "y_max": 1.0, "amplitude": 1.0},
         "diagnostics": {"mode": "full_reference"},
+        "local_controller": {
+            "objective_weights": {
+                "u": 1.0,
+                "v": 1.0,
+                "p": 0.5,
+                "omega": 0.5,
+                "residual": 0.25,
+                "continuity": 1.0,
+                "momentum": 0.5,
+                "boundary": 1.5,
+                "unweighted_validation": 0.25,
+            },
+            "continuity_collateral_tolerance": 0.05,
+            "boundary_collateral_tolerance": 0.05,
+            "validation_loss_tolerance": 0.02,
+        },
     },
     "rectangular_aspect_ratio": {
         "benchmark": "rectangular_aspect_ratio",
         "benchmark_params": {"reynolds": 40.0, "x_min": 0.0, "x_max": 2.0, "y_min": 0.0, "y_max": 1.0, "amplitude": 1.0},
         "diagnostics": {"mode": "full_reference"},
+        "local_controller": {
+            "objective_weights": {
+                "u": 1.0,
+                "v": 1.0,
+                "p": 1.0,
+                "omega": 0.5,
+                "residual": 0.25,
+                "continuity": 1.0,
+                "momentum": 0.5,
+                "boundary": 1.0,
+                "unweighted_validation": 0.25,
+            },
+            "continuity_collateral_tolerance": 0.05,
+            "boundary_collateral_tolerance": 0.05,
+            "validation_loss_tolerance": 0.02,
+        },
     },
 }
 
@@ -70,6 +150,7 @@ def run_named_benchmark(
 ) -> list[dict[str, Any]]:
     base = load_config(args.config)
     config = deep_update(base, BENCHMARK_DEFAULTS[benchmark_name])
+    config["run_type"] = "smoke" if args.quick else "benchmark"
     config["experiments"] = dict(config.get("experiments", {}))
     config["experiments"]["root"] = args.output_dir
     if args.device:

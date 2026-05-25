@@ -28,6 +28,11 @@ def mae(pred: np.ndarray, true: np.ndarray) -> float:
     return float(np.mean(np.abs(pred - true)))
 
 
+def _finite_sum(values: list[float]) -> float:
+    finite = [float(v) for v in values if np.isfinite(float(v))]
+    return float(sum(finite)) if finite else float("nan")
+
+
 def evaluate_on_grid(
     model: torch.nn.Module,
     benchmark: Any,
@@ -52,7 +57,13 @@ def evaluate_on_grid(
     p_c = center_pressure(p)
     speed = np.sqrt(u * u + v * v)
     pde = residuals["pde_residual"].detach().cpu().numpy()
+    pde_loss = (
+        residuals["f_u"].detach().cpu().numpy() ** 2
+        + residuals["f_v"].detach().cpu().numpy() ** 2
+        + residuals["f_c"].detach().cpu().numpy() ** 2
+    )
     div = np.abs(residuals["f_c"].detach().cpu().numpy())
+    unweighted_bc_loss = _boundary_mse(model, benchmark, coords_np, device)
     metrics = {
         "u_rel_l2": float("nan"),
         "v_rel_l2": float("nan"),
@@ -85,6 +96,10 @@ def evaluate_on_grid(
         "pde_residual_mean": float(np.mean(pde)),
         "pde_residual_max": float(np.max(pde)),
         "boundary_condition_error": _boundary_error(model, benchmark, coords_np, device),
+        "unweighted_data_loss": float("nan"),
+        "unweighted_pde_loss": float(np.mean(pde_loss)),
+        "unweighted_bc_loss": unweighted_bc_loss,
+        "unweighted_validation_loss": float("nan"),
         "wall_clock_eval_sec": time.time() - start,
         "num_eval_points": int(coords_np.shape[0]),
     }
@@ -94,6 +109,11 @@ def evaluate_on_grid(
             (residuals["p_x"].detach().cpu().numpy() - ref.get("p_x", 0.0)) ** 2
             + (residuals["p_y"].detach().cpu().numpy() - ref.get("p_y", 0.0)) ** 2
         )
+        u_mse = float(np.mean((u - ref["u"]) ** 2))
+        v_mse = float(np.mean((v - ref["v"]) ** 2))
+        p_mse = float(np.mean((p_c - p_ref_c) ** 2))
+        omega_mse = float(np.mean((omega - ref["omega"]) ** 2))
+        data_loss = u_mse + v_mse + p_mse + omega_mse
         metrics.update(
             {
                 "u_rel_l2": relative_l2(u, ref["u"]),
@@ -114,8 +134,16 @@ def evaluate_on_grid(
                 "p_reference_norm": float(np.linalg.norm(p_ref_c)),
                 "omega_reference_norm": float(np.linalg.norm(ref["omega"])),
                 "pressure_gradient_error": float(np.mean(p_grad_err)),
+                "unweighted_data_loss": data_loss,
             }
         )
+    metrics["unweighted_validation_loss"] = _finite_sum(
+        [
+            metrics["unweighted_pde_loss"],
+            metrics["unweighted_bc_loss"],
+            0.0 if not has_reference else metrics["unweighted_data_loss"],
+        ]
+    )
     return metrics
 
 
@@ -136,3 +164,22 @@ def _boundary_error(
         ref = benchmark.exact_torch(coords)
         err = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
     return float(torch.mean(err).detach().cpu())
+
+
+def _boundary_mse(
+    model: torch.nn.Module,
+    benchmark: Any,
+    coords_np: np.ndarray,
+    device: torch.device,
+) -> float:
+    if not hasattr(benchmark, "boundary_mask_np"):
+        return float("nan")
+    mask = benchmark.boundary_mask_np(coords_np)
+    if not np.any(mask):
+        return float("nan")
+    coords = torch.tensor(coords_np[mask], dtype=torch.float32, device=device)
+    with torch.no_grad():
+        pred = model(coords)
+        ref = benchmark.exact_torch(coords)
+        err2 = (pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2)
+    return float(torch.mean(err2).detach().cpu())
