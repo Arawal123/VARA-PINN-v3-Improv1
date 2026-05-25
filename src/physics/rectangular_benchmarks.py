@@ -102,7 +102,13 @@ class DoubleVortexBoxFlow(RectangularBenchmarkBase):
         p = 0.25 * a * (torch.cos(4.0 * pi_t * xi) + torch.cos(2.0 * pi_t * eta))
         px = -a * pi_t * torch.sin(4.0 * pi_t * xi) / self.width
         py = -0.5 * a * pi_t * torch.sin(2.0 * pi_t * eta) / self.height
-        omega = torch.zeros_like(u)
+        dv_dx = -4.0 * a * pi_t * pi_t * torch.cos(4.0 * pi_t * xi) * torch.sin(pi_t * eta).pow(2) / (
+            self.width * self.width
+        )
+        du_dy = 2.0 * a * pi_t * pi_t * torch.sin(2.0 * pi_t * xi).pow(2) * torch.cos(2.0 * pi_t * eta) / (
+            self.height * self.height
+        )
+        omega = dv_dx - du_dy
         speed = torch.sqrt(u * u + v * v)
         return {"u": u, "v": v, "p": p, "omega": omega, "p_x": px, "p_y": py, "speed": speed}
 
@@ -124,7 +130,9 @@ class BoundaryStressBoxFlow(RectangularBenchmarkBase):
         p = 0.1 * a * (1.0 - xi)
         px = torch.full_like(u, -0.1 * a / self.width)
         py = torch.zeros_like(u)
-        omega = torch.zeros_like(u)
+        dv_dx = 0.5 * a * pi_t * torch.cos(2.0 * pi_t * xi) * eta * (1.0 - eta) / self.width
+        du_dy = -a / self.height + 0.25 * a * pi_t * torch.sin(pi_t * xi) * torch.cos(pi_t * eta) / self.height
+        omega = dv_dx - du_dy
         speed = torch.sqrt(u * u + v * v)
         return {"u": u, "v": v, "p": p, "omega": omega, "p_x": px, "p_y": py, "speed": speed}
 

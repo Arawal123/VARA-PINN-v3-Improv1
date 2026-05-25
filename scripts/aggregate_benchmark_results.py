@@ -26,10 +26,20 @@ METRICS = [
     "v_rmse",
     "p_rmse_centered",
     "omega_rmse",
+    "u_pred_mean",
+    "v_pred_mean",
+    "p_pred_std_centered",
+    "speed_pred_mean",
+    "speed_pred_max",
+    "omega_pred_abs_mean",
+    "omega_pred_abs_max",
     "pde_residual_mean",
     "continuity_residual_mean",
     "momentum_residual_mean",
     "boundary_condition_error",
+    "u_boundary_rmse",
+    "v_boundary_rmse",
+    "boundary_speed_rmse",
     "unweighted_data_loss",
     "unweighted_pde_loss",
     "unweighted_bc_loss",
@@ -62,6 +72,9 @@ def main() -> None:
     collapse.to_csv(out / "collapse_rate_table.csv", index=False)
     seedwise = build_seedwise(df)
     seedwise.to_csv(out / "seedwise_comparison_table.csv", index=False)
+    build_readable(df).to_csv(out / "combined_results_readable.csv", index=False)
+    build_readable(methodwise).to_csv(out / "methodwise_mean_std_readable.csv", index=False)
+    build_readable(seedwise).to_csv(out / "seedwise_comparison_readable.csv", index=False)
     save_bar_plots(methodwise, fig_dir)
     save_seedwise_scatter(df, fig_dir)
 
@@ -72,6 +85,9 @@ def main() -> None:
         "collapse_rate_table.csv",
         "seedwise_comparison_table.csv",
         "methodwise_mean_std_table.csv",
+        "combined_results_readable.csv",
+        "methodwise_mean_std_readable.csv",
+        "seedwise_comparison_readable.csv",
     ]:
         print(f"  {out / name}")
     print(f"  {fig_dir}")
@@ -131,6 +147,16 @@ def build_methodwise(df: pd.DataFrame) -> pd.DataFrame:
         rows.append(row)
     sort_cols = ["benchmark", "run_type", "method"] if rows and "run_type" in rows[0] else ["benchmark", "method"]
     return pd.DataFrame(rows).sort_values(sort_cols)
+
+
+def build_readable(df: pd.DataFrame) -> pd.DataFrame:
+    readable = df.copy()
+    for col in readable.columns:
+        if pd.api.types.is_float_dtype(readable[col]):
+            readable[col] = readable[col].map(lambda x: "N/A" if pd.isna(x) else f"{float(x):.6g}")
+        else:
+            readable[col] = readable[col].where(pd.notna(readable[col]), "N/A")
+    return readable
 
 
 def build_collapse(df: pd.DataFrame) -> pd.DataFrame:
@@ -208,6 +234,7 @@ def save_bar_plots(methodwise: pd.DataFrame, fig_dir: Path) -> None:
             "pde_residual_mean",
             "unweighted_validation_loss",
             "boundary_condition_error",
+            "boundary_speed_rmse",
         ]:
             v = group[group["method"] == "vanilla"]
             a = group[group["method"] == "vara"]

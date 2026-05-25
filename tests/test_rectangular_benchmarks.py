@@ -7,7 +7,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.physics.rectangular_benchmarks import LidDrivenCavityQualitative, PoiseuilleChannelFlow
+from src.physics.rectangular_benchmarks import DoubleVortexBoxFlow, LidDrivenCavityQualitative, PoiseuilleChannelFlow
 
 
 def test_channel_reference_shapes():
@@ -27,3 +27,11 @@ def test_lid_cavity_boundary_reference_only():
     assert not bench.has_reference
     assert torch.isclose(ref["u"][0, 0], torch.tensor(1.0))
     assert torch.isclose(ref["u"][1, 0], torch.tensor(0.0))
+
+
+def test_double_vortex_has_nonzero_vorticity_reference():
+    bench = DoubleVortexBoxFlow()
+    _, _, xy = bench.grid(24, 24)
+    ref = bench.exact_np(xy)
+    assert np.isfinite(ref["omega"]).all()
+    assert np.linalg.norm(ref["omega"]) > 1.0
