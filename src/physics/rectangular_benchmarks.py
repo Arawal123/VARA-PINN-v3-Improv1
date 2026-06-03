@@ -10,6 +10,7 @@ import torch
 
 from src.physics.cavity_reference import (
     interpolate_full_field,
+    load_or_generate_full_field_reference,
     load_full_field_reference,
     load_lid_cavity_profile_reference,
 )
@@ -151,6 +152,7 @@ class LidDrivenCavityQualitative(RectangularBenchmarkBase):
     reference: str = "none"
     reference_path: str | None = None
     full_field_reference_path: str | None = None
+    generated_reference_validation: dict[str, float] | None = None
     profile_only: bool = True
     reference_kind: str = "residual_only"
     has_reference: bool = False

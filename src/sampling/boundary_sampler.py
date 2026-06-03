@@ -42,6 +42,8 @@ class BoundarySampler:
         lid_fraction: float = 0.45,
         corner_fraction: float = 0.25,
         corner_width: float = 0.12,
+        avoid_exact_corners: bool = True,
+        corner_epsilon: float = 1e-4,
     ) -> np.ndarray:
         """Sample cavity walls with extra mass on the moving lid and lid-corner discontinuities."""
         if n <= 0:
@@ -56,7 +58,16 @@ class BoundarySampler:
         n_lid = int(round(n * lid_fraction))
         n_corner = int(round(n * corner_fraction))
         n_uniform = max(0, n - n_lid - n_corner)
-        pieces = [self.sample_numpy(n_uniform), self._sample_lid(n_lid), self._sample_lid_corners(n_corner, corner_width)]
+        pieces = [
+            self.sample_numpy(n_uniform),
+            self._sample_lid(n_lid, avoid_exact_corners=avoid_exact_corners, corner_epsilon=corner_epsilon),
+            self._sample_lid_corners(
+                n_corner,
+                corner_width,
+                avoid_exact_corners=avoid_exact_corners,
+                corner_epsilon=corner_epsilon,
+            ),
+        ]
         out = np.vstack([p for p in pieces if p.size])
         if out.shape[0] < n:
             out = np.vstack([out, self.sample_numpy(n - out.shape[0])])
@@ -117,14 +128,21 @@ class BoundarySampler:
         """Torch wrapper for patch-restricted boundary sampling."""
         return torch.tensor(self.sample_patch_numpy(patch_grid, patch_ids, n), dtype=torch.float32, device=self.device)
 
-    def _sample_lid(self, n: int) -> np.ndarray:
+    def _sample_lid(self, n: int, avoid_exact_corners: bool = True, corner_epsilon: float = 1e-4) -> np.ndarray:
         if n <= 0:
             return np.zeros((0, 2), dtype=float)
         x0, x1, _y0, y1 = self.bounds
-        x = self.rng.uniform(x0, x1, n)
+        eps = min(max(float(corner_epsilon), 0.0), 0.49 * max(x1 - x0, 1e-12)) if avoid_exact_corners else 0.0
+        x = self.rng.uniform(x0 + eps, x1 - eps, n)
         return np.column_stack([x, np.full(n, y1)])
 
-    def _sample_lid_corners(self, n: int, corner_width: float) -> np.ndarray:
+    def _sample_lid_corners(
+        self,
+        n: int,
+        corner_width: float,
+        avoid_exact_corners: bool = True,
+        corner_epsilon: float = 1e-4,
+    ) -> np.ndarray:
         if n <= 0:
             return np.zeros((0, 2), dtype=float)
         x0, x1, y0, y1 = self.bounds
@@ -134,13 +152,15 @@ class BoundarySampler:
         width_y = min(width, y1 - y0)
         pts = np.zeros((n, 2), dtype=float)
         choices = self.rng.integers(0, 4, n)
+        eps_x = min(max(float(corner_epsilon), 0.0), 0.49 * max(width_x, 1e-12)) if avoid_exact_corners else 0.0
+        eps_y = min(max(float(corner_epsilon), 0.0), 0.49 * max(width_y, 1e-12)) if avoid_exact_corners else 0.0
         for i, choice in enumerate(choices):
             if choice == 0:
-                pts[i] = [self.rng.uniform(x0, x0 + width_x), y1]
+                pts[i] = [self.rng.uniform(x0 + eps_x, x0 + width_x), y1]
             elif choice == 1:
-                pts[i] = [self.rng.uniform(x1 - width_x, x1), y1]
+                pts[i] = [self.rng.uniform(x1 - width_x, x1 - eps_x), y1]
             elif choice == 2:
-                pts[i] = [x0, self.rng.uniform(y1 - width_y, y1)]
+                pts[i] = [x0, self.rng.uniform(y1 - width_y, y1 - eps_y)]
             else:
-                pts[i] = [x1, self.rng.uniform(y1 - width_y, y1)]
+                pts[i] = [x1, self.rng.uniform(y1 - width_y, y1 - eps_y)]
         return pts

@@ -1,0 +1,5 @@
+benchmark,run_type,method,n_runs,parameter_count_mean,parameter_count_std,parameter_count_valid_n,optimizer_steps_mean,optimizer_steps_std,optimizer_steps_valid_n,adam_steps_mean,adam_steps_std,adam_steps_valid_n,lbfgs_steps_mean,lbfgs_steps_std,lbfgs_steps_valid_n,collocation_points_seen_mean,collocation_points_seen_std,collocation_points_seen_valid_n,boundary_points_seen_mean,boundary_points_seen_std,boundary_points_seen_valid_n,data_points_seen_mean,data_points_seen_std,data_points_seen_valid_n,wall_clock_train_sec_mean,wall_clock_train_sec_std,wall_clock_train_sec_valid_n
+kovasznay,full,vara,1,,,0,,,0,,,0,,,0,,,0,,,0,,,0,,,0
+kovasznay,unknown,vara,2,,,0,,,0,,,0,,,0,,,0,,,0,,,0,,,0
+lid_driven_cavity,smoke,vanilla,2,371.0,0.0,2,2.0,0.0,2,2.0,0.0,2,0.0,0.0,2,64.0,0.0,2,64.0,0.0,2,0.0,0.0,2,0.07646393775939941,0.016092341111035517,2
+lid_driven_cavity,smoke,vara,2,371.0,0.0,2,2.0,0.0,2,2.0,0.0,2,0.0,0.0,2,64.0,0.0,2,64.0,0.0,2,0.0,0.0,2,2.3169604539871216,0.39336210053617743,2

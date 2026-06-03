@@ -16,12 +16,12 @@ from src.utils.config import load_config
 
 MODES = [
     "vanilla_pinn",
-    "global_adaptive_loss",
-    "region_only_adaptive",
-    "variable_only_adaptive",
     "residual_adaptive_sampling",
-    "global_vorticity_loss",
-    "global_pressure_correction",
+    "global_adaptive_loss",
+    "self_adaptive_attention",
+    "gpinn",
+    "hard_divergence_pinn",
+    "more_points_vanilla",
 ]
 
 
@@ -39,4 +39,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

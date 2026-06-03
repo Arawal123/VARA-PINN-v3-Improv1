@@ -35,10 +35,9 @@ class DiagnosticMapBuilder:
     ) -> dict[str, np.ndarray]:
         """Compute diagnostics in full_reference, sparse_data, or residual_only mode."""
         mode = mode.lower()
-        coords = torch.tensor(coords_np, dtype=torch.float32, device=self.device)
+        coords = torch.tensor(coords_np, dtype=self._model_dtype(), device=self.device)
         self.model.eval()
-        with torch.no_grad():
-            pred = self.model(coords)
+        pred = self._predict(coords)
         residuals = navier_stokes_residuals(self.model, coords, nu=self.benchmark.nu, steady=self.steady)
 
         u_pred = pred[:, 0:1].detach().cpu().numpy()
@@ -146,10 +145,23 @@ class DiagnosticMapBuilder:
         out = np.zeros((coords_np.shape[0], 1), dtype=float)
         if not np.any(boundary_mask):
             return out
-        coords = torch.tensor(coords_np[boundary_mask], dtype=torch.float32, device=self.device)
+        coords = torch.tensor(coords_np[boundary_mask], dtype=self._model_dtype(), device=self.device)
         with torch.no_grad():
-            pred = self.model(coords)
+            pred = self._predict(coords)
             ref = self.benchmark.exact_torch(coords)
             viol = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
-        out[boundary_mask] = viol.cpu().numpy()
+        out[boundary_mask] = viol.detach().cpu().numpy()
         return out
+
+    def _model_dtype(self) -> torch.dtype:
+        try:
+            return next(self.model.parameters()).dtype
+        except StopIteration:
+            return torch.float32
+
+    def _predict(self, coords: torch.Tensor) -> torch.Tensor:
+        if getattr(self.model, "field_kind", "direct_uvp") == "streamfunction_p":
+            with torch.enable_grad():
+                return self.model(coords)
+        with torch.no_grad():
+            return self.model(coords)

@@ -7,7 +7,7 @@ from typing import Any
 import torch
 
 from src.physics.kovasznay import center_pressure
-from src.physics.navier_stokes import navier_stokes_residuals
+from src.physics.navier_stokes import gradients, navier_stokes_residuals
 
 
 def mse(x: torch.Tensor) -> torch.Tensor:
@@ -68,3 +68,19 @@ def weighted_sum(losses: dict[str, torch.Tensor], weights: dict[str, float]) -> 
     for name, loss in losses.items():
         total = total + float(weights.get(name, 0.0)) * loss
     return total
+
+
+def compute_gpinn_gradient_penalty(
+    model: torch.nn.Module,
+    xy_f: torch.Tensor,
+    benchmark: Any,
+    steady: bool = True,
+) -> torch.Tensor:
+    """Residual-gradient penalty used by gPINN-style baselines."""
+    residuals = navier_stokes_residuals(model, xy_f, nu=benchmark.nu, steady=steady)
+    coords = residuals["coords"]
+    penalty = xy_f.new_tensor(0.0)
+    for name in ["f_c", "f_u", "f_v"]:
+        grad = gradients(residuals[name], coords)
+        penalty = penalty + torch.mean(grad[:, 0:2].pow(2))
+    return penalty

@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src.evaluation.statistical_tests import paired_metric_statistics
+
 
 METRICS = [
     "u_rel_l2",
@@ -48,14 +50,32 @@ METRICS = [
     "v_centerline_rmse",
     "u_centerline_rel_l2",
     "v_centerline_rel_l2",
+    "centerline_extrema_error",
     "centerline_profile_score",
     "cavity_benchmark_score",
+    "lid_corner_boundary_error",
+    "near_wall_residual_proxy",
+    "full_field_u_rmse",
+    "full_field_v_rmse",
+    "full_field_p_rmse_centered",
+    "full_field_omega_rmse",
     "unweighted_data_loss",
     "unweighted_pde_loss",
     "unweighted_bc_loss",
     "unweighted_validation_loss",
     "final_total_loss",
     "J_score",
+]
+
+BUDGET_COLUMNS = [
+    "parameter_count",
+    "optimizer_steps",
+    "adam_steps",
+    "lbfgs_steps",
+    "collocation_points_seen",
+    "boundary_points_seen",
+    "data_points_seen",
+    "wall_clock_train_sec",
 ]
 
 
@@ -78,6 +98,12 @@ def main() -> None:
     methodwise = build_methodwise(df)
     methodwise.to_csv(out / "methodwise_mean_std_table.csv", index=False)
     methodwise.to_csv(out / "final_summary_table.csv", index=False)
+    paired = build_paired_statistics_table(df)
+    paired.to_csv(out / "paired_statistics_table.csv", index=False)
+    valid_counts = build_valid_seed_counts(df)
+    valid_counts.to_csv(out / "valid_seed_counts_table.csv", index=False)
+    compute_budget = build_compute_budget(df)
+    compute_budget.to_csv(out / "compute_budget_table.csv", index=False)
     collapse = build_collapse(df)
     collapse.to_csv(out / "collapse_rate_table.csv", index=False)
     seedwise = build_seedwise(df)
@@ -88,6 +114,9 @@ def main() -> None:
     build_readable(methodwise).to_csv(out / "methodwise_mean_std_readable.csv", index=False)
     build_readable(seedwise).to_csv(out / "seedwise_comparison_readable.csv", index=False)
     build_readable(cavity).to_csv(out / "cavity_profile_summary_readable.csv", index=False)
+    build_readable(paired).to_csv(out / "paired_statistics_readable.csv", index=False)
+    build_readable(valid_counts).to_csv(out / "valid_seed_counts_readable.csv", index=False)
+    build_readable(compute_budget).to_csv(out / "compute_budget_readable.csv", index=False)
     save_bar_plots(methodwise, fig_dir)
     save_seedwise_scatter(df, fig_dir)
 
@@ -98,11 +127,17 @@ def main() -> None:
         "collapse_rate_table.csv",
         "seedwise_comparison_table.csv",
         "methodwise_mean_std_table.csv",
+        "paired_statistics_table.csv",
+        "valid_seed_counts_table.csv",
+        "compute_budget_table.csv",
         "cavity_profile_summary_table.csv",
         "combined_results_readable.csv",
         "methodwise_mean_std_readable.csv",
         "seedwise_comparison_readable.csv",
         "cavity_profile_summary_readable.csv",
+        "paired_statistics_readable.csv",
+        "valid_seed_counts_readable.csv",
+        "compute_budget_readable.csv",
     ]:
         print(f"  {out / name}")
     print(f"  {fig_dir}")
@@ -139,6 +174,17 @@ def collect_rows(results_dir: Path) -> list[dict]:
             "most_frequently_targeted_patch": data.get("most_frequently_targeted_patch"),
             "collapsed": bool(data.get("collapsed", False)),
             "cavity_profile_reference_source": data.get("cavity_profile_reference_source", ""),
+            "architecture": data.get("architecture", ""),
+            "model_kind": data.get("model_kind", ""),
+            "parameter_count": data.get("parameter_count", np.nan),
+            "optimizer_steps": data.get("optimizer_steps", np.nan),
+            "adam_steps": data.get("adam_steps", np.nan),
+            "lbfgs_steps": data.get("lbfgs_steps", np.nan),
+            "collocation_points_seen": data.get("collocation_points_seen", np.nan),
+            "boundary_points_seen": data.get("boundary_points_seen", np.nan),
+            "data_points_seen": data.get("data_points_seen", np.nan),
+            "wall_clock_train_sec": data.get("wall_clock_train_sec", np.nan),
+            "full_field_reference_used": data.get("full_field_reference_used", False),
         }
         for metric in METRICS:
             row[metric] = data.get(metric, np.nan)
@@ -157,9 +203,10 @@ def build_methodwise(df: pd.DataFrame) -> pd.DataFrame:
             benchmark, method = key
             row = {"benchmark": benchmark, "method": method, "n_runs": len(group)}
         for metric in METRICS:
-            values = pd.to_numeric(group[metric], errors="coerce")
+            values = _metric_series(group, metric)
             row[f"{metric}_mean"] = values.mean()
             row[f"{metric}_std"] = values.std()
+            row[f"{metric}_valid_n"] = int(values.notna().sum())
         rows.append(row)
     sort_cols = ["benchmark", "run_type", "method"] if rows and "run_type" in rows[0] else ["benchmark", "method"]
     return pd.DataFrame(rows).sort_values(sort_cols)
@@ -188,6 +235,8 @@ def build_cavity_table(methodwise: pd.DataFrame) -> pd.DataFrame:
         "u_centerline_rmse_std",
         "v_centerline_rmse_mean",
         "v_centerline_rmse_std",
+        "centerline_extrema_error_mean",
+        "centerline_extrema_error_std",
         "centerline_profile_score_mean",
         "centerline_profile_score_std",
         "pde_residual_mean_mean",
@@ -195,6 +244,8 @@ def build_cavity_table(methodwise: pd.DataFrame) -> pd.DataFrame:
         "centerline_continuity_residual_mean_mean",
         "corner_pde_residual_mean_mean",
         "corner_boundary_error_mean",
+        "lid_corner_boundary_error_mean",
+        "near_wall_residual_proxy_mean",
         "continuity_residual_mean_mean",
         "momentum_residual_mean_mean",
         "boundary_condition_error_mean",
@@ -202,6 +253,95 @@ def build_cavity_table(methodwise: pd.DataFrame) -> pd.DataFrame:
         "cavity_benchmark_score_mean",
     ]
     return cavity[[col for col in keep if col in cavity.columns]]
+
+
+def build_paired_statistics_table(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    group_keys = ["benchmark", "run_type"] if "run_type" in df.columns else ["benchmark"]
+    for key, group in df.groupby(group_keys):
+        if isinstance(key, tuple):
+            benchmark, run_type = key
+        else:
+            benchmark = key
+            run_type = "unknown"
+        if "vanilla" not in set(group["method"]):
+            continue
+        vanilla = group[group["method"] == "vanilla"].sort_values("seed")
+        for method, candidate in group.groupby("method"):
+            if method == "vanilla":
+                continue
+            vanilla_metrics = vanilla[["seed"]].copy()
+            candidate_metrics = candidate[["seed"]].copy()
+            for metric in METRICS:
+                vanilla_metrics[metric] = _metric_series(vanilla, metric).to_numpy()
+                candidate_metrics[metric] = _metric_series(candidate, metric).to_numpy()
+            merged = vanilla_metrics.merge(candidate_metrics, on="seed", suffixes=("_vanilla", "_candidate"))
+            for metric in METRICS:
+                stats = paired_metric_statistics(
+                    merged[f"{metric}_vanilla"].to_numpy(dtype=float),
+                    merged[f"{metric}_candidate"].to_numpy(dtype=float),
+                    higher_is_better=False,
+                )
+                rows.append(
+                    {
+                        "benchmark": benchmark,
+                        "run_type": run_type,
+                        "baseline_method": "vanilla",
+                        "candidate_method": method,
+                        "metric": metric,
+                        **stats,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def build_valid_seed_counts(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    group_keys = ["benchmark", "run_type", "method"] if "run_type" in df.columns else ["benchmark", "method"]
+    for key, group in df.groupby(group_keys):
+        if len(group_keys) == 3:
+            benchmark, run_type, method = key
+        else:
+            benchmark, method = key
+            run_type = "unknown"
+        for metric in METRICS:
+            values = _metric_series(group, metric)
+            rows.append(
+                {
+                    "benchmark": benchmark,
+                    "run_type": run_type,
+                    "method": method,
+                    "metric": metric,
+                    "valid_seed_count": int(values.notna().sum()),
+                    "total_seed_count": int(len(group)),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def build_compute_budget(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    group_keys = ["benchmark", "run_type", "method"] if "run_type" in df.columns else ["benchmark", "method"]
+    for key, group in df.groupby(group_keys):
+        if len(group_keys) == 3:
+            benchmark, run_type, method = key
+        else:
+            benchmark, method = key
+            run_type = "unknown"
+        row = {"benchmark": benchmark, "run_type": run_type, "method": method, "n_runs": len(group)}
+        for col in BUDGET_COLUMNS:
+            values = pd.to_numeric(group.get(col, pd.Series(dtype=float)), errors="coerce")
+            row[f"{col}_mean"] = values.mean()
+            row[f"{col}_std"] = values.std()
+            row[f"{col}_valid_n"] = int(values.notna().sum())
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values(["benchmark", "run_type", "method"]) if rows else pd.DataFrame()
+
+
+def _metric_series(df: pd.DataFrame, metric: str) -> pd.Series:
+    if metric not in df.columns:
+        return pd.Series([np.nan] * len(df), index=df.index, dtype=float)
+    return pd.to_numeric(df[metric], errors="coerce")
 
 
 def build_collapse(df: pd.DataFrame) -> pd.DataFrame:
@@ -248,8 +388,8 @@ def build_seedwise(df: pd.DataFrame) -> pd.DataFrame:
         a = vara.iloc[-1]
         row = {"benchmark": benchmark, "run_type": run_type, "seed": seed}
         for metric in METRICS:
-            v_val = pd.to_numeric(pd.Series([v[metric]]), errors="coerce").iloc[0]
-            a_val = pd.to_numeric(pd.Series([a[metric]]), errors="coerce").iloc[0]
+            v_val = pd.to_numeric(pd.Series([v[metric] if metric in v.index else np.nan]), errors="coerce").iloc[0]
+            a_val = pd.to_numeric(pd.Series([a[metric] if metric in a.index else np.nan]), errors="coerce").iloc[0]
             row[f"{metric}_vanilla"] = v_val
             row[f"{metric}_vara"] = a_val
             row[f"{metric}_improvement_percent"] = (v_val - a_val) / v_val * 100.0 if pd.notna(v_val) and v_val != 0 and pd.notna(a_val) else np.nan

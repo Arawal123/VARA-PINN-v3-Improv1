@@ -10,7 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.evaluation.metrics import evaluate_on_grid
-from src.physics.cavity_reference import load_lid_cavity_profile_reference
+from src.physics.cavity_reference import (
+    generate_lid_cavity_full_field_reference,
+    interpolate_full_field,
+    load_full_field_reference,
+    load_lid_cavity_profile_reference,
+)
 from src.physics.rectangular_benchmarks import LidDrivenCavityQualitative
 
 
@@ -50,6 +55,33 @@ def test_external_centerline_csv_loader(tmp_path):
     ref = load_lid_cavity_profile_reference("external", 100, path)
     assert len(ref.u_profile) == 2
     assert len(ref.v_profile) == 2
+
+
+def test_full_field_reference_load_and_interpolation(tmp_path):
+    path = tmp_path / "full_field.csv"
+    rows = []
+    for y in [0.0, 1.0]:
+        for x in [0.0, 1.0]:
+            rows.append({"x": x, "y": y, "u": x + y, "v": x - y, "p": x, "omega": y})
+    pd.DataFrame(rows).to_csv(path, index=False)
+    ref = load_full_field_reference(path)
+    interp = interpolate_full_field(ref, np.array([[0.5, 0.5]]))
+    assert np.allclose(interp["u"], [[1.0]])
+    assert np.allclose(interp["v"], [[0.0]])
+
+
+def test_generated_cavity_reference_shape_and_ghia_validation():
+    ref, validation = generate_lid_cavity_full_field_reference(
+        reynolds=100,
+        nx=9,
+        ny=9,
+        max_iter=3,
+        tolerance=0.0,
+    )
+    assert ref["x"].shape == (81,)
+    assert ref["u"].shape == (81,)
+    assert validation["solver_grid_nx"] == 9
+    assert np.isfinite(validation["ghia_validation_score"])
 
 
 def test_cavity_profile_metrics_are_finite():

@@ -1,0 +1,5 @@
+benchmark,run_type,method,collapse_rate_percent,collapsed,evaluated_runs,total_runs,smoke_or_not_evaluated_runs
+kovasznay,full,vara,100.0,1,1,1,0
+kovasznay,unknown,vara,0.0,0,2,2,0
+lid_driven_cavity,smoke,vanilla,,0,0,2,2
+lid_driven_cavity,smoke,vara,,0,0,2,2

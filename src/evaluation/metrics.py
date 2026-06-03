@@ -42,10 +42,10 @@ def evaluate_on_grid(
 ) -> dict[str, float]:
     """Compute global evaluation metrics without using them for adaptation."""
     start = time.time()
-    coords = torch.tensor(coords_np, dtype=torch.float32, device=device)
+    dtype = _model_dtype(model)
+    coords = torch.tensor(coords_np, dtype=dtype, device=device)
     model.eval()
-    with torch.no_grad():
-        pred = model(coords)
+    pred = _predict_torch(model, coords)
     residuals = navier_stokes_residuals(model, coords, nu=benchmark.nu, steady=steady)
     has_reference = bool(getattr(benchmark, "has_reference", True))
     ref = benchmark.exact_np(coords_np) if has_reference else None
@@ -115,6 +115,7 @@ def evaluate_on_grid(
         "v_centerline_rmse": float("nan"),
         "u_centerline_rel_l2": float("nan"),
         "v_centerline_rel_l2": float("nan"),
+        "centerline_extrema_error": float("nan"),
         "centerline_profile_score": float("nan"),
         "cavity_benchmark_score": float("nan"),
         "cavity_profile_reference_source": "",
@@ -159,6 +160,10 @@ def evaluate_on_grid(
                 "unweighted_data_loss": data_loss,
             }
         )
+        metrics["full_field_u_rmse"] = metrics["u_rmse"]
+        metrics["full_field_v_rmse"] = metrics["v_rmse"]
+        metrics["full_field_p_rmse_centered"] = metrics["p_rmse_centered"]
+        metrics["full_field_omega_rmse"] = metrics["omega_rmse"]
     metrics.update(_cavity_profile_metrics(model, benchmark, device))
     if benchmark.__class__.__name__.lower().startswith("liddrivencavity"):
         metrics.update(
@@ -182,6 +187,7 @@ def evaluate_on_grid(
         metrics["cavity_benchmark_score"] = _finite_sum(
             [
                 metrics["centerline_profile_score"],
+                metrics["centerline_extrema_error"],
                 metrics["pde_residual_mean"],
                 metrics["continuity_residual_mean"],
                 metrics["momentum_residual_mean"],
@@ -215,6 +221,7 @@ def _cavity_residual_geometry_metrics(
     bottom = coords_np[:, 1:2] <= y0 + corner_width
     top = coords_np[:, 1:2] >= y1 - corner_width
     corner_mask = (left | right) & (bottom | top)
+    near_wall = left | right | bottom | top
     boundary_mask = benchmark.boundary_mask_np(coords_np)[:, None] if hasattr(benchmark, "boundary_mask_np") else np.zeros_like(corner_mask)
     corner_boundary_mask = corner_mask & boundary_mask
     return {
@@ -222,6 +229,8 @@ def _cavity_residual_geometry_metrics(
         "centerline_continuity_residual_mean": _weighted_mean(continuity, centerline_weight),
         "corner_pde_residual_mean": _masked_mean(pde, corner_mask),
         "corner_boundary_error": _corner_boundary_error(model, benchmark, coords_np, corner_boundary_mask[:, 0], device),
+        "lid_corner_boundary_error": _corner_boundary_error(model, benchmark, coords_np, corner_boundary_mask[:, 0], device),
+        "near_wall_residual_proxy": _masked_mean(pde, near_wall),
     }
 
 
@@ -251,9 +260,9 @@ def _corner_boundary_error(
 ) -> float:
     if not np.any(mask):
         return float("nan")
-    coords = torch.tensor(coords_np[mask], dtype=torch.float32, device=device)
+    coords = torch.tensor(coords_np[mask], dtype=_model_dtype(model), device=device)
     with torch.no_grad():
-        pred = model(coords)
+        pred = _predict_torch(model, coords)
         ref = benchmark.exact_torch(coords)
         err = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
     return float(torch.mean(err).detach().cpu())
@@ -269,6 +278,7 @@ def _cavity_profile_metrics(
         "v_centerline_rmse": float("nan"),
         "u_centerline_rel_l2": float("nan"),
         "v_centerline_rel_l2": float("nan"),
+        "centerline_extrema_error": float("nan"),
         "centerline_profile_score": float("nan"),
         "cavity_profile_reference_source": "",
     }
@@ -282,21 +292,29 @@ def _cavity_profile_metrics(
         ref = np.asarray(profile["u_ref"], dtype=float)
         out["u_centerline_rmse"] = rmse(pred, ref)
         out["u_centerline_rel_l2"] = relative_l2(pred, ref)
+        out["centerline_extrema_error"] = _add_extrema_error(float(out["centerline_extrema_error"]), pred, ref)
         pieces.append(float(out["u_centerline_rmse"]))
     if "v_xy" in profile and "v_ref" in profile:
         pred = _predict_field(model, np.asarray(profile["v_xy"], dtype=float), device)[:, 1:2]
         ref = np.asarray(profile["v_ref"], dtype=float)
         out["v_centerline_rmse"] = rmse(pred, ref)
         out["v_centerline_rel_l2"] = relative_l2(pred, ref)
+        out["centerline_extrema_error"] = _add_extrema_error(float(out["centerline_extrema_error"]), pred, ref)
         pieces.append(float(out["v_centerline_rmse"]))
     out["centerline_profile_score"] = float(sum(pieces)) if pieces else float("nan")
     return out
 
 
+def _add_extrema_error(current: float, pred: np.ndarray, ref: np.ndarray) -> float:
+    value = float(abs(np.min(pred) - np.min(ref)) + abs(np.max(pred) - np.max(ref)))
+    if np.isfinite(current):
+        return current + value
+    return value
+
+
 def _predict_field(model: torch.nn.Module, coords_np: np.ndarray, device: torch.device) -> np.ndarray:
-    coords = torch.tensor(coords_np, dtype=torch.float32, device=device)
-    with torch.no_grad():
-        return model(coords).detach().cpu().numpy()
+    coords = torch.tensor(coords_np, dtype=_model_dtype(model), device=device)
+    return _predict_torch(model, coords).detach().cpu().numpy()
 
 
 def _boundary_error(
@@ -310,9 +328,9 @@ def _boundary_error(
     mask = benchmark.boundary_mask_np(coords_np)
     if not np.any(mask):
         return float("nan")
-    coords = torch.tensor(coords_np[mask], dtype=torch.float32, device=device)
+    coords = torch.tensor(coords_np[mask], dtype=_model_dtype(model), device=device)
     with torch.no_grad():
-        pred = model(coords)
+        pred = _predict_torch(model, coords)
         ref = benchmark.exact_torch(coords)
         err = torch.sqrt((pred[:, 0:1] - ref["u"]).pow(2) + (pred[:, 1:2] - ref["v"]).pow(2))
     return float(torch.mean(err).detach().cpu())
@@ -335,9 +353,9 @@ def _boundary_metrics(
     mask = benchmark.boundary_mask_np(coords_np)
     if not np.any(mask):
         return empty
-    coords = torch.tensor(coords_np[mask], dtype=torch.float32, device=device)
+    coords = torch.tensor(coords_np[mask], dtype=_model_dtype(model), device=device)
     with torch.no_grad():
-        pred = model(coords)
+        pred = _predict_torch(model, coords)
         ref = benchmark.exact_torch(coords)
         u_err2 = (pred[:, 0:1] - ref["u"]).pow(2)
         v_err2 = (pred[:, 1:2] - ref["v"]).pow(2)
@@ -348,3 +366,19 @@ def _boundary_metrics(
         "boundary_speed_rmse": float(torch.sqrt(torch.mean(err2)).detach().cpu()),
         "unweighted_bc_loss": float(torch.mean(err2).detach().cpu()),
     }
+
+
+def _model_dtype(model: torch.nn.Module) -> torch.dtype:
+    try:
+        return next(model.parameters()).dtype
+    except StopIteration:
+        return torch.float32
+
+
+def _predict_torch(model: torch.nn.Module, coords: torch.Tensor) -> torch.Tensor:
+    """Predict fields while allowing hard-divergence models to take derivatives."""
+    if getattr(model, "field_kind", "direct_uvp") == "streamfunction_p":
+        with torch.enable_grad():
+            return model(coords)
+    with torch.no_grad():
+        return model(coords)

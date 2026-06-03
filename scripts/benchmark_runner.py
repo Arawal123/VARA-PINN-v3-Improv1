@@ -19,7 +19,27 @@ from src.utils.config import deep_update, load_config, save_config
 from src.utils.io import save_json
 
 
-METHOD_TO_MODE = {"vanilla": "vanilla_pinn", "vara": "local_constrained_vara"}
+METHOD_TO_MODE = {
+    "vanilla": "vanilla_pinn",
+    "vara": "local_constrained_vara",
+    "residual_adaptive_sampling": "residual_adaptive_sampling",
+    "global_adaptive_loss": "global_adaptive_loss",
+    "self_adaptive_attention": "self_adaptive_attention",
+    "gpinn": "gpinn",
+    "hard_divergence_pinn": "hard_divergence_pinn",
+    "more_points_vanilla": "more_points_vanilla",
+    "vara_direct": "local_constrained_vara",
+    "vara_streamfunction": "local_constrained_vara",
+}
+BASELINE_METHODS = [
+    "vanilla",
+    "residual_adaptive_sampling",
+    "global_adaptive_loss",
+    "self_adaptive_attention",
+    "gpinn",
+    "hard_divergence_pinn",
+    "more_points_vanilla",
+]
 
 
 BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -193,7 +213,7 @@ BENCHMARK_DEFAULTS: dict[str, dict[str, Any]] = {
 
 def parser_for(description: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--method", choices=["vanilla", "vara", "both"], default="both")
+    parser.add_argument("--method", choices=[*METHOD_TO_MODE, "both", "baselines"], default="both")
     parser.add_argument("--seeds", nargs="+", type=int, default=[0])
     parser.add_argument("--config", default="configs/kovasznay_debug.yaml")
     parser.add_argument("--quick", action="store_true")
@@ -270,13 +290,23 @@ def run_named_benchmark(
             },
         )
 
-    methods = ["vanilla", "vara"] if args.method == "both" else [args.method]
+    if args.method == "both":
+        methods = ["vanilla", "vara"]
+    elif args.method == "baselines":
+        methods = BASELINE_METHODS
+    else:
+        methods = [args.method]
     rows = []
     for seed in args.seeds:
         for method in methods:
             run_config = deepcopy(config)
             run_config["seed"] = int(seed)
             mode = METHOD_TO_MODE[method]
+            run_config["method"] = method
+            if method == "vara_streamfunction":
+                run_config["model"] = {**run_config.get("model", {}), "kind": "streamfunction_p"}
+            if method == "vara_direct":
+                run_config["model"] = {**run_config.get("model", {}), "kind": "direct_uvp"}
             trainer = VARATrainer(run_config, mode=mode)
             metrics = trainer.run()
             metrics["benchmark"] = run_config["benchmark"]

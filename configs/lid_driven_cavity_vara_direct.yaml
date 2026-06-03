@@ -1,0 +1,6 @@
+base_config: configs/lid_driven_cavity_reviewer.yaml
+method: vara_direct
+mode: local_constrained_vara
+model:
+  kind: direct_uvp
+

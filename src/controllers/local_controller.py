@@ -63,6 +63,7 @@ class LocalControllerConfig:
     boundary_patch_margin: float = 1e-9
     rejection_recovery_epochs: int = 0
     warmup_cycles: int = 0
+    normalized_acceptance_objective: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "LocalControllerConfig":
@@ -98,6 +99,7 @@ class LocalControllerConfig:
             boundary_patch_margin=float(data.get("boundary_patch_margin", 1e-9)),
             rejection_recovery_epochs=int(data.get("rejection_recovery_epochs", 0)),
             warmup_cycles=int(data.get("warmup_cycles", 0)),
+            normalized_acceptance_objective=bool(data.get("normalized_acceptance_objective", True)),
         )
 
     @property
@@ -396,10 +398,12 @@ class LocalVARAController:
             "u_boundary": self._relative_damage(before_metrics, after_metrics, "u_boundary_rmse"),
             "v_boundary": self._relative_damage(before_metrics, after_metrics, "v_boundary_rmse"),
         }
+        j_before, j_after = self._acceptance_objective_pair(before_metrics, after_metrics)
         return {
             "target_local_improvement": float(target_improvement),
-            "J_before": self.objective(before_metrics),
-            "J_after": self.objective(after_metrics),
+            "J_before": j_before,
+            "J_after": j_after,
+            "J_is_normalized": bool(self.config.normalized_acceptance_objective),
             "max_collateral_damage": float(max(collateral.values()) if collateral else 0.0),
             "pressure_collateral_damage": float(max(0.0, (pressure_after - pressure_before) / (abs(pressure_before) + 1e-12))),
             "continuity_collateral_damage": collateral.get("continuity_residual_mean", 0.0),
@@ -413,6 +417,40 @@ class LocalVARAController:
             "u_boundary_hard_damage": hard_damages["u_boundary"],
             "v_boundary_hard_damage": hard_damages["v_boundary"],
         }
+
+    def _acceptance_objective_pair(self, before_metrics: dict[str, float], after_metrics: dict[str, float]) -> tuple[float, float]:
+        if not self.config.normalized_acceptance_objective:
+            return self.objective(before_metrics), self.objective(after_metrics)
+        weights = self.config.objective_weights or {}
+        terms = [
+            ("u", "u_rel_l2", "u_rmse"),
+            ("v", "v_rel_l2", "v_rmse"),
+            ("p", "p_rel_l2_centered", "p_rmse_centered"),
+            ("omega", "omega_rel_l2", "omega_rmse"),
+            ("residual", "pde_residual_mean", None),
+            ("continuity", "continuity_residual_mean", None),
+            ("momentum", "momentum_residual_mean", None),
+            ("boundary", "boundary_condition_error", None),
+            ("unweighted_validation", "unweighted_validation_loss", None),
+            ("centerline_pde", "centerline_pde_residual_mean", None),
+            ("centerline_continuity", "centerline_continuity_residual_mean", None),
+            ("corner_pde", "corner_pde_residual_mean", None),
+            ("corner_boundary", "corner_boundary_error", None),
+            ("u_boundary", "u_boundary_rmse", None),
+            ("v_boundary", "v_boundary_rmse", None),
+        ]
+        j_before = 0.0
+        j_after = 0.0
+        for weight_name, metric_name, fallback in terms:
+            weight = float(weights.get(weight_name, 0.0))
+            if weight == 0.0:
+                continue
+            before = self._metric_with_fallback(before_metrics, metric_name, fallback) if fallback else self._metric(before_metrics, metric_name)
+            after = self._metric_with_fallback(after_metrics, metric_name, fallback) if fallback else self._metric(after_metrics, metric_name)
+            scale = abs(before) if abs(before) > 1e-12 else 1.0
+            j_before += weight
+            j_after += weight * after / scale
+        return float(j_before), float(j_after)
 
     def _relative_damage(self, before_metrics: dict[str, float], after_metrics: dict[str, float], name: str) -> float:
         before = self._metric(before_metrics, name)

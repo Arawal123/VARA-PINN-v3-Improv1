@@ -1,0 +1,6 @@
+base_config: configs/lid_driven_cavity_reviewer.yaml
+method: hard_divergence_pinn
+mode: hard_divergence_pinn
+model:
+  kind: streamfunction_p
+

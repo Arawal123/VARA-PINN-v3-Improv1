@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -12,11 +14,14 @@ import torch
 from src.controllers import (
     ConstrainedVARAPolicy,
     LocalControllerConfig,
+    LocalIntervention,
     LocalVARAController,
     RuleBasedVARAPolicy,
     VARAController,
 )
 from src.diagnostics import DiagnosticMapBuilder
+from src.losses.loss_balancing import clip_weights, normalize_weight_sum
+from src.training.baseline_modes import BASELINE_MODE_SPECS, prepare_mode_config
 from src.training.trainer import ExperimentTrainer
 from src.utils.io import ensure_dir, save_json
 from src.utils.logging import CSVLogger, JSONListLogger
@@ -37,6 +42,7 @@ class VARATrainer(ExperimentTrainer):
     """Train a variable-aware regional adaptive PINN."""
 
     def __init__(self, config: dict, mode: str = "full_vara") -> None:
+        config = prepare_mode_config(config, mode)
         super().__init__(config, mode)
         controller_cfg = config.get("controller", {})
         base_policy = RuleBasedVARAPolicy(
@@ -77,8 +83,11 @@ class VARATrainer(ExperimentTrainer):
         self.local_figure_dir = ensure_dir(self.run_dir / "figures")
         self.local_decisions: list[dict[str, Any]] = []
         self.local_weight_records: list[dict[str, Any]] = []
+        self.replay_schedule = self._load_replay_schedule(config.get("ablation", {}).get("replay_schedule_path"))
 
     def run(self) -> dict[str, float]:
+        if self.mode in BASELINE_MODE_SPECS:
+            return self._run_baseline_variant(BASELINE_MODE_SPECS[self.mode])
         if self.mode in {"local_vara", "local_constrained_vara"}:
             return self._run_local(constrained=self.mode == "local_constrained_vara")
         if self.mode == "full_vara_constrained":
@@ -118,12 +127,86 @@ class VARATrainer(ExperimentTrainer):
                 self.controller.state,
                 adaptive=adaptive_sampling and self.mode != "vanilla_pinn",
             )
+        self.maybe_run_lbfgs(batch, self.controller.state if local_weights_enabled else None)
         metrics = self.evaluate_and_save_final()
         metrics["J_score"] = self._j_score(metrics)
         metrics["accepted_interventions"] = self.accepted_interventions
         metrics["rejected_interventions"] = self.rejected_interventions
         metrics["rollback_count"] = self.rollback_count
         return metrics
+
+    def _run_baseline_variant(self, spec: dict[str, Any]) -> dict[str, float]:
+        """Run a real baseline with controller interventions disabled."""
+        train_cfg = self.config.get("training", {})
+        cycles = int(train_cfg.get("adaptive_cycles", 2))
+        batch = self.initial_batch()
+        adaptive_sampling = bool(spec.get("adaptive_sampling", False))
+
+        for cycle in range(cycles):
+            if bool(spec.get("global_adaptive_loss", False)) and self.last_losses:
+                self._update_global_adaptive_weights()
+            self.train_epochs(batch, None, cycle=cycle, log_prefix=str(spec.get("algorithm_family", self.mode)))
+            maps, scores, names, weak_regions, X, Y, coords = self.diagnose()
+            metrics = self._validation_metrics(coords)
+            self.metrics_logger.log(
+                {
+                    "cycle": cycle,
+                    "phase": "baseline",
+                    "baseline_mode": self.mode,
+                    "algorithm_family": spec.get("algorithm_family", self.mode),
+                    **metrics,
+                }
+            )
+            self.score_logger.log({"cycle": cycle, "diagnostics": names, "scores": scores})
+            self.weak_logger.log({"cycle": cycle, "weak_regions": weak_regions if adaptive_sampling else []})
+            self.action_logger.log(
+                {
+                    "cycle": cycle,
+                    "stage": "baseline_no_vara_controller",
+                    "mode": self.mode,
+                    "algorithm_family": spec.get("algorithm_family", self.mode),
+                    "adaptive_sampling": adaptive_sampling,
+                    "actions": [],
+                }
+            )
+            self.maybe_checkpoint(cycle, metrics)
+            batch = self.resample_batch(
+                batch,
+                maps,
+                coords,
+                weak_regions if adaptive_sampling else [],
+                control_state=None,
+                adaptive=adaptive_sampling,
+            )
+
+        self.maybe_run_lbfgs(batch, None)
+        metrics = self.evaluate_and_save_final()
+        metrics["J_score"] = self._j_score(metrics)
+        metrics["baseline_algorithm"] = str(spec.get("algorithm_family", self.mode))
+        metrics["adaptive_sampling_enabled"] = adaptive_sampling
+        metrics["accepted_interventions"] = 0
+        metrics["rejected_interventions"] = 0
+        metrics["rollback_count"] = 0
+        pd.DataFrame([metrics]).to_csv(self.run_dir / "summary_table.csv", index=False)
+        pd.DataFrame([metrics]).to_csv(self.table_dir / "summary.csv", index=False)
+        save_json(metrics, self.run_dir / "summary.json")
+        return metrics
+
+    def _update_global_adaptive_weights(self) -> None:
+        training = self.config.setdefault("training", {})
+        weights = dict(training.get("weights", {}))
+        if not weights:
+            return
+        updated = {}
+        for name, old_weight in weights.items():
+            loss_value = float(self.last_losses.get(name, 0.0))
+            if not np.isfinite(loss_value) or loss_value <= 0.0:
+                updated[name] = float(old_weight)
+            else:
+                updated[name] = float(old_weight) * float(np.sqrt(loss_value + 1e-12))
+        updated = normalize_weight_sum(clip_weights(updated, min_value=0.01, max_value=100.0), total=sum(weights.values()))
+        training["weights"] = updated
+        self.loss_logger.log({"cycle": "adaptive_weight_update", **{f"weight_{k}": v for k, v in updated.items()}})
 
     def _run_constrained(self) -> dict[str, float]:
         """Constrained VARA: try, evaluate, accept/rollback, then continue."""
@@ -214,6 +297,7 @@ class VARATrainer(ExperimentTrainer):
                 adaptive=accepted,
             )
 
+        self.maybe_run_lbfgs(batch, self.controller.state)
         metrics = self.evaluate_and_save_final()
         metrics["J_score"] = self._j_score(metrics)
         metrics["accepted_interventions"] = self.accepted_interventions
@@ -227,6 +311,9 @@ class VARATrainer(ExperimentTrainer):
     def _run_local(self, constrained: bool) -> dict[str, float]:
         """Run local variable-region control without changing vanilla/full modes."""
         train_cfg = self.config.get("training", {})
+        components = self.config.get("ablation", {}).get("components", {})
+        if components and not bool(components.get("A", constrained)):
+            constrained = False
         cycles = int(train_cfg.get("adaptive_cycles", 2))
         epochs_per_cycle = int(train_cfg.get("epochs_per_cycle", 100))
         trial_epochs = self.local_controller.config.trial_epochs if constrained else 0
@@ -295,6 +382,7 @@ class VARATrainer(ExperimentTrainer):
                 continue
 
             interventions = self.local_controller.propose(weak_regions)
+            interventions = self._interventions_for_components(cycle, interventions)
             cycle_action_records: list[dict[str, Any]] = []
             accepted_interventions: list[Any] = []
             kept_metrics = metrics_before
@@ -463,9 +551,10 @@ class VARATrainer(ExperimentTrainer):
                 maps_before,
                 coords,
                 accepted_interventions,
-                adaptive=bool(accepted_interventions),
+                adaptive=bool(accepted_interventions) and bool(components.get("S", True)),
             )
 
+        self.maybe_run_lbfgs(batch, self.local_controller.state)
         save_local_weight_evolution(self.local_weight_records, self.local_figure_dir / "local_weight_evolution.png")
         save_accept_reject_counts(self.local_decisions, self.local_figure_dir / "accepted_vs_rejected.png")
         save_targeted_patch_improvement(self.local_decisions, self.local_figure_dir / "targeted_patch_improvement.png")
@@ -750,14 +839,82 @@ class VARATrainer(ExperimentTrainer):
                         self.boundary_sampler.sample_patch_numpy(self.patch_grid, patch_ids, n_focus),
                     ]
                 )
-                xy_bc = torch.tensor(xy_bc_np, dtype=torch.float32, device=self.device)
+                xy_bc = self._tensor(xy_bc_np)
             else:
                 xy_bc = self._sample_boundary(n_bc)
         else:
             xy_f = self.uniform_sampler.sample(n_f)
             xy_data = self.uniform_sampler.sample(n_data)
             xy_bc = self._sample_boundary(n_bc)
-        return self.make_batch(xy_f, xy_bc, xy_data)
+        return self.make_batch(self._tensor(xy_f), xy_bc, self._tensor(xy_data))
+
+    def _load_replay_schedule(self, path: str | None) -> dict[int, list[LocalIntervention]]:
+        if not path:
+            return {}
+        schedule_path = Path(path)
+        if not schedule_path.exists():
+            raise FileNotFoundError(f"Replay schedule not found: {schedule_path}")
+        with schedule_path.open("r", encoding="utf-8") as f:
+            records = json.load(f)
+        by_cycle: dict[int, list[LocalIntervention]] = {}
+        for record in records:
+            cycle = int(record.get("cycle", -1))
+            actions = record.get("actions", [])
+            interventions = []
+            for action in actions:
+                if not action:
+                    continue
+                interventions.append(
+                    LocalIntervention(
+                        variable=str(action.get("variable", "aggregate_pde_residual")),
+                        patch_id=int(action.get("patch_id", 0)),
+                        action=str(action.get("action", "increase_local_pde")),
+                        loss_variables=list(action.get("loss_variables", ["pde"])),
+                        strength=float(action.get("strength", 0.0)),
+                        severity=float(action.get("severity", 1.0)),
+                        confidence=float(action.get("confidence", 1.0)),
+                        bounds=tuple(action.get("bounds", (0.0, 1.0, 0.0, 1.0, None, None))),
+                    )
+                )
+            if cycle >= 0:
+                by_cycle[cycle] = interventions
+        return by_cycle
+
+    def _interventions_for_components(self, cycle: int, proposed: list[LocalIntervention]) -> list[LocalIntervention]:
+        interventions = deepcopy(self.replay_schedule.get(cycle, proposed)) if self.replay_schedule else proposed
+        components = self.config.get("ablation", {}).get("components", {})
+        if not components:
+            return interventions
+        if not bool(components.get("V", True)):
+            interventions = [
+                LocalIntervention(
+                    variable="aggregate_pde_residual",
+                    patch_id=intervention.patch_id,
+                    action="increase_local_pde",
+                    loss_variables=["pde"],
+                    strength=intervention.strength,
+                    severity=intervention.severity,
+                    confidence=intervention.confidence,
+                    bounds=intervention.bounds,
+                )
+                for intervention in interventions
+            ]
+        if not bool(components.get("R", True)):
+            # Collapse regional specificity into a deterministic single patch for replayability.
+            interventions = [
+                LocalIntervention(
+                    variable=intervention.variable,
+                    patch_id=0,
+                    action=intervention.action,
+                    loss_variables=intervention.loss_variables,
+                    strength=intervention.strength,
+                    severity=intervention.severity,
+                    confidence=intervention.confidence,
+                    bounds=self.patch_grid.get_patch(0).bounds,
+                )
+                for intervention in interventions[:1]
+            ]
+        return interventions
 
     def _most_frequent(self, key: str) -> str | int | None:
         counts: dict[Any, int] = {}
